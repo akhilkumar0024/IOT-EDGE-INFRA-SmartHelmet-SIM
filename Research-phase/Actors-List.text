@@ -1,0 +1,121 @@
+Actor: [helmet/smartphone]
+Needs: what they want from the system   
+A smart Helmet that can alert emergency services in case of an accident,
+displays speed, maybe in the future it can display navigation instructions(like ability to overtake a vehilce in front)
+shows a display that an  alers will be sent to the emergency services if the rider doesn't respond in 30 seconds ability to cancel the alert
+shows them the health of comms with the server is the helmet cutoff or not from the server maybe a small green indicator to show that the helmet is connected to the server
+Fears:    what they don't want to happen
+helmet sensors failed/corrupted sending false data need an in build health check for sensors 
+A fasle alarm being sent to Emergency Services, or next to kin causing a panic and costs or legal issues 
+Triggers: what causes them to interact with the system
+A alert being sent to the emergency services or next of kin and they want to cancel it 
+wearing the helmet and switching it on 
+Not being able to send Telemetry to the Telemetry system
+
+
+
+Actor: [Rider]
+Needs:    what they want from the system
+A smart Helmet that can alert emergency services in case of an accident,
+displays speed, maybe in the future it can display navigation instructions(like ability to overtake a vehilce in front)
+shows a display that an  alers will be sent to the emergency services if the rider doesn't respond in 30 seconds ability to cancel the alert
+shows them the health of comms with the server is the helmet cutoff or not from the server maybe a small green indicator to show that the helmet is connected to the server
+Fears:    what they don't want to happen
+A fasle alarm being sent to Emergency Services, or next to kin causing a panic and costs or legal issues 
+Triggers: what causes them to interact with the system
+cancelling an alert being sent to the emergency services or next of kin 
+someone else using the helmet 
+rider ignoring the fasle positive alerts or ignoring the alert being sent 
+malicious actions like hacking or tampering or simulating a crash
+
+Actor: [Next of Kin]
+Needs:    what they want from the system
+a relible method to know that they are getting the message from a genuine actor and not from a malicious actor
+Fears:    what they don't want to happen
+a malicious actor luring next of kin or spreading panic 
+techinal jargon instead or a humane message
+Triggers: what causes them to interact with the system
+an alert from the alert infra
+
+Actor: [Emergency Services]
+Needs: what they want from the system
+Need to know that a the message is from a verified source and genuine 
+Fears: what they Fear
+Malicious actors sending fake alerts causing panic and wasting resources
+repeated alerts being sent for the same incident 
+Triggers: what causes them to interact with the system
+an alert from the alert infra
+
+
+
+Actor: [Telemetry Infrastructure]
+Needs:    what they want from the system
+Actively listen to the Telemetry from the riders, store it and process it(maybe processing can be done by another system good to sepatate concerns)
+get data such as maintainace data 
+Fears:    what they don't want to happen
+Telemetry failure to capture data from the riders
+Telemetry infra being unable to scale if the numnber of users increase eg : when a user is going to office such a 8:00 am everyone is starting their bikes and switching their helmets on and 
+the data vol is too much to handle
+Telemetry infra not scaling down despite the number of users decreasing eg : late night or between 12-4 am etc 
+Triggers: what causes them to interact with the system
+a rider wont be interacting with the Telemetry infra but a system that uses the telemetry data will be interacting with the Telemetry infra to get the telemetry data store it and process it
+an engineer will also monitoriing the telemetry infra via a monitoriing stack 
+
+Actor: [Alerting Infrastructure]
+Needs:    what they want from the system
+They Actively take the input from the Alerting API and send the alert that needs to be sent to the emergency services && next of kin
+Fears:    what they don't want to happen
+Alerting infra not being able to correctly contact the emergency services if too many crashed are happening and are not able to address the needs ie infra not being able to scale
+Triggers: what causes them to interact with the system
+Alerting API sending an alert to the alerting infra
+
+Actor: [Processing Infrastructure]
+Needs:    what they want from the system
+data from the telemetry infra
+Fears:    what they don't want to happen
+fasle positives is what we want to prevent, differentiate between a bump and a crash handle scenarios where the internet drop offs is not seen as a crash 
+receiving duplicate, corrupted, or out-of-order messages
+Triggers: what causes them to interact with the system
+Telemetry data being fed into the processing infra
+PS:in the implemetation phase they can be part of the telemetry infra but in the design phase they are different  
+
+Actor: [Database]
+Needs:    what they want from the system
+Information such as Helmet ID, User Id, the telemetry data, maintainace data
+store the alerts data maintainace data and the user data like user id and helmet ID 
+we dont need to store the telemetry data for long term maybe one day is enough and that too only the latest but that would mean too many writes its costly (in terms of money)
+maybe data should pass through the processing infra before being written into the db since we will need only the latest incident data onyl for creating alerts etc need to think about this 
+Fears:    what they don't want to happen
+Storage getting full fast and costs increasing
+hot and cold storage can be useed but i dont think we need store the data for every telemetry data that is send every 5 seconds 
+losing the user user data, incident alert trigger data and maintainace data
+Triggers: what causes them to interact with the system
+data from the telemetry/processing infra
+
+Actor: [Monitoring Infrastructure]
+Needs:    what they want from the system
+health checks from the telemetry infra, alerting infra, processing infra, db
+Fears:    what they don't want to happen
+what if the monitoring infra itself goes down should be able to alert the Infrastructure incharge 
+Triggers: what causes them to interact with the system
+data from the telemetry infra, alerting infra, processing infra, db
+
+Actor: [Infrastructure incharge]
+Needs:    what they want from the system
+a view of all the infrastructure and its health
+Fears:    what they don't want to happen
+what if the infrastructure incharge is not available to monitor the system
+what if there is no visbility of the system, what if the monitoring infra itself goes down 
+the monitor infrastructure fails to pickup the failing infras and dosent alert the infrastructure incharge 
+Triggers: what causes them to interact with the system
+need to view the infrastructure health
+push updates to helmet or infra rollback chnages etc 
+
+Actor: [Cloud Platform]
+Needs:    what they want from the system
+hosts all the infrastructure
+Fears:    what they don't want to happen
+Cloud hosting the infra itself goes down
+maybe create a backup but that is costly and seem like beyond the scope of this project 
+Triggers: what causes them to interact with the system
+infrastructure engineers interact with cloud the very infra lives in cloud
