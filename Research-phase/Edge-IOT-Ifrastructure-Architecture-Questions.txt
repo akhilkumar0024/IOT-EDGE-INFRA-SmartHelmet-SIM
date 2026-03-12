@@ -1,0 +1,79 @@
+About the Helmet (Edge)
+
+What data does a helmet produce? (speed, GPS, accelerometer, battery?)
+The Helmet produces data like Speed, Location,destination of the user, Accelerometer data, Battery Levels , Helmet ID, User ID, Timestamp, i was thinking of the helmet being able to tell if 
+the user can overtake the vehicle in front of him or not, using the speed of the user and the speed of the vehicle in front of him, and the distance between the user and the vehicle in front of him
+but for the sake of simplicity lets keep only the speed location, destination of the user, Accelerometer data, Battery Levels , Helmet ID, User ID, Timestamp
+
+
+
+How often does it send data? (every second? every 100ms?)
+The data like speed location, destination of the user, Accelerometer data, Battery Levels , Helmet ID, User ID, Timestamp is sent every 5 seconds this is normal smooth exactly as planned scenario
+but for scenarios like the user has met an accident the data like change in speed either exponential increase in very short time or decrease can be used maybe a 3 second window (am still not clear i have many scenarios in mind what if the helmet just fell down 
+should i alert the user first about calling the Emergency services we need to brainstorm this part ) 
+
+
+What happens if the internet drops mid-ride?
+this is where i think the data that we are sending every 5 second comes handy like location and destination we can map it to network coverage, previous telemetry data like speed the distance to next coverage location the traffic at the location
+etc we can use this to predict the next telemetry data ever 5 second that we are sending should have information of change in acceleration comapred to previous second, if its a case of just internet failure we can extrapolate
+with previous battery levels, speed, network coverage, destination, traffic at the location to identify it it just was a internet drop and whenever the helmet gets connected to the internet it sends all the data it had stored 
+
+
+
+What's the difference between "helmet off" vs "helmet crashed"?
+Helmet OFF will send a meesage before it is turned off and the crashed part we will have to decide how to detect the crash this part is still not clear to me this is also
+something that will be developer heavy i guess
+
+
+About Scale
+
+10 helmets sending data every 500ms = manageable
+1,000,000 helmets sending data every 500ms = ~2 million messages per second
+Your infra needs to handle both without being rebuilt
+am thinking of linking the infra to the active users head count, like if there are no active users then the infra should be scaled down and if there are active users then the infra should be scaled up when the helmet is active
+like when switching on it send a request to create infra maybe a listener that alway watches for a new request then scales up the necessary infra
+
+
+
+About Alerting
+Who gets alerted when a crash happens? Rider? Emergency contact? Both?
+both should be alerted as this is the primary mechanism against fasle positive cases where the rider can cancel the alert within 30 seconds if he is not in danger if he cancels emergency services are not alerted
+
+
+What if the alert system itself goes down?
+we can have two systems one for telemetry and another for alerting if we have regular telemetry but its the alert system that is not reachable then i guess we have an alert system failure and we can inform an appropriate message like alert system at the server side has failed hence 
+no alerts will be sent to the emergency contacts and the rider will be notified about it 
+
+
+False positive — bumpy road vs actual crash — who decides?
+as i said in the questions before this is the part is unclear we need to brainstorm it and come up with scenarios and solutions but telemetry data like accelaration data etc will be cruicial
+
+
+About Cost
+
+Should infra exist when zero helmets are active?
+maybe only a listener should be active and which will scale up the necessary infra when there is a request from the helmet to create infra and scale down when there is no request from the helmet to create infra
+the creation and deletion of infra will depend maily on the number of active users 
+
+Should you pay for a server running at 3am with no riders?
+maybe the alerting service can be a subscription based service but will people be willing to pay to contact emergency services 
+
+About Monitoring
+
+How do you know your infra is healthy?
+
+How do you know a helmet is struggling to connect before it fully drops?
+i think we can use the last known telemetry data like  location, destination of the user, Battery Levels, network coverage etc to identify if the helmet is struggling to connect
+
+If 500 helmets crash simultaneously — is it a real mass accident or your broker going down?
+i think in the scenario some level of probability will have to used like the location and the freqency of accidents there but i guess such a monitoring will now dwelve into the realm of ai something that is beyong our scope
+if 500 helmets crash we can keep a simple logic like what percentage is the 500 out of all the active head counts 
+
+What are the three things a helmet needs to communicate to the cloud?
+Helmet should tell the speed location destination of the user, change in speed , Battery Levels , Helmet ID, User ID, Timestamp
+
+What should happen in the 30 seconds after a crash is detected?
+the helmet should alert the user on both the helmet and the smartphone app, and the user should be able to cancel the alert within 30 seconds if he is not in danger if he cancels emergency services are not alerted
+
+What does "the infra is healthy" look like to you?
+the telemetry reception is fine, the infra monitoring each helmet is fine, the alerting system is fine i guess
