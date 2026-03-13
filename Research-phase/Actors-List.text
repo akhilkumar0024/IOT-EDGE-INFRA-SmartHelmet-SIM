@@ -1,228 +1,371 @@
-Actor: [helmet]
+================================================================
+SMART HELMET IOT EDGE INFRASTRUCTURE — ACTORS LIST
+IOT-EDGE-INFRA-SmartHelmet-SIM | Research Phase
+================================================================
 
-Needs: what they want from the system   
-Sufficient power to operate sensors
-Compute capacity to run the edge operations
-Ability to communicate with the Telemetry Infrastructure
-Ability to communicate with the Smartphone
-Bluetooth interface to connnect with Smartphone
+----------------------------------------------------------------
+Actor: [Helmet]
+----------------------------------------------------------------
+Needs:
+- Sufficient power to operate sensors continuously during a ride
+- Compute capacity to run edge processing (crash detection locally)
+- Stable Bluetooth connection to Smartphone for data relay
+- Ability to receive firmware updates from cloud via Smartphone
+- Local storage buffer for telemetry data during connectivity loss
+- Built-in sensor health check to detect and flag sensor failure
 
-Fears:    what they don't want to happen
-what if a user dosent have smarpthone(very unlikely but its a must have a requirement)
-failing to connect with smarpthone
-Sending fasle alerts without alerting the rider 
-rider ignoring the fasle positive alerts being sent 
-helmet sensors failed/corrrupted sending false data need an in built health check for sensors that can alert the need for maintainance
-A fasle alarm being sent to Emergency Services, or next to kin causing a panic and costs or legal issues 
-malicious actions like hacking or tampering or simulating a crash
-Not being able to send Telemetry to the Telemetry system
+Fears:
+- Sensor failure or corruption producing false telemetry data
+- False crash alert sent without rider acknowledgment
+- Rider ignoring repeated false positive alerts (alert fatigue)
+- Failing to connect to Smartphone (single point of failure for cloud comms)
+- User without a Smartphone (edge case — must have fallback consideration)
+- Malicious actor hacking, tampering, or simulating a crash event
+- Failure to transmit telemetry to Telemetry Infrastructure
+- Edge processing damaged in a crash producing corrupted events
 
-Triggers: what causes them to interact with the system
-A alert being sent to the emergency services or next of kin and they want to cancel it 
-wearing the helmet and switching it on 
+Triggers:
+- Rider powers on helmet and initiates Bluetooth pairing with Smartphone
+- Sensor threshold exceeded — potential crash event detected
+- Connectivity loss to Smartphone detected
+- Sensor health check failure detected
+- Firmware update received from cloud via Smartphone
+- LWT triggered by unexpected disconnection from broker
+- Graceful shutdown initiated by rider switching helmet off
 
 
-
-
+----------------------------------------------------------------
 Actor: [Rider]
-Needs:    what they want from the system
-A smart Helmet that can alert emergency services in case of an accident,
-displays speed, maybe in the future it can display navigation instructions(like ability to overtake a vehilce in front)
-shows a display that an  alers will be sent to the emergency services if the rider doesn't respond in 30 seconds ability to cancel the alert
-shows them the health of comms with the server is the helmet cutoff or not from the server maybe a small green indicator to show that the helmet is connected to the server
+----------------------------------------------------------------
+Needs:
+- Helmet that alerts emergency services automatically in a crash
+- HUD display showing speed and connectivity health (green indicator)
+- 30-second cancel window after crash detection before alert escalates
+- Visibility of alert status on both helmet HUD and Smartphone app
 
-Fears:    what they don't want to happen
-Sending fasle alerts without the knowledge of the rider 
-A fasle alarm being sent to Emergency Services, or next to kin causing a panic and costs or legal issues 
-Helmet failing to connect to the Telemetry infrastructure and/or Alerting infrastructure
-Triggers: what causes them to interact with the system
-cancelling an alert being sent to the emergency services or next of kin 
+Fears:
+- False alert sent to emergency services or next of kin without warning
+- Panic or legal consequences from false alarms
+- Helmet failing to connect to Telemetry or Alerting Infrastructure
+- Someone else using their helmet triggering alerts under their identity
 
+Triggers:
+- Cancelling an alert within the 30-second window
+- Powering the helmet on or off
+- Reviewing connectivity status or ride data on Smartphone app
+
+
+----------------------------------------------------------------
 Actor: [Smartphone]
+----------------------------------------------------------------
+Needs:
+- Stable Bluetooth connection to Helmet
+- Ability to relay helmet telemetry to Telemetry Infrastructure over mobile data
+- Companion app to display alerts, connectivity status, and cancel mechanism
+- Local storage to buffer telemetry data if cloud connectivity is lost
+- Ability to authenticate rider and helmet to prevent unauthorized use
+- Act as fallback sensor source if helmet sensors fail (future scope)
 
-Needs:    what they want from the system
-Connectivity to Helmet
-receive data from Helmet
-conectivity to telemetry infra
-smarpthone is what will be sending data to telemetry infra as there wont be need to creating a long range communication system bluetooth maybe can save power also
-can use phone storage to store buffer data also
-Smartphone can also act a sensor incase the helmet sensors fail(can be implemented later as a fallback) can also act as authentication prevent malicious activities
+Fears:
+- Bluetooth connection to Helmet failing
+- Mobile data connectivity lost — no relay path to cloud
+- Smartphone becomes single point of failure for all cloud communication
+- Phone battery dead during a crash — rider loses cancel mechanism
+- Push notification not delivered (Do Not Disturb mode, no signal)
+- Failure to register helmet or rider with cloud on first setup
 
-Fears:    what they don't want to happen
-Failure to connect with helmet
-Failure to register the helmet or user with Cloud
-smartphone can become a single point of failure to communicate with the telemetry infra
-Triggers: what causes them to interact with the system
-Switching on the helmet and connecting to the Smartphone
-Bluetooth failing 
-lack of bandwidth
-external interferance
+Triggers:
+- Helmet powers on and initiates Bluetooth pairing
+- Crash event detected by helmet edge processing
+- Rider opens companion app
+- Incoming alert requiring rider acknowledgement or cancellation
+- Push notification received from Alerting Infrastructure
+- Connectivity loss or reconnection to mobile network
 
+
+----------------------------------------------------------------
 Actor: [Next of Kin]
-Needs:    what they want from the system
-a relible method to know that they are getting the message from a genuine actor and not from a malicious actor
-Fears:    what they don't want to happen
-a malicious actor luring next of kin or spreading panic 
-techinal jargon instead or a human friendly information message
-Triggers: what causes them to interact with the system
-an alert from the alert infra
+----------------------------------------------------------------
+Needs:
+- Reliable notification that is clearly from a verified, genuine source
+- Human-friendly message with location and basic incident information
+- Simple acknowledgement mechanism (link or button) to confirm receipt
 
+Fears:
+- Malicious actor spoofing alerts to cause panic
+- Receiving technical jargon instead of a clear human-readable message
+- Alert received but no way to confirm it was acted on
+
+Triggers:
+- Alert dispatched by Alerting Infrastructure after 30-second window expires
+
+
+----------------------------------------------------------------
 Actor: [Emergency Services]
-Needs: what they want from the system
-Need to know that a the message is from a verified source and genuine 
-Fears: what they Fear
-Malicious actors sending fake alerts causing panic and wasting resources
-repeated alerts being sent for the same incident 
-Triggers: what causes them to interact with the system
-an alert from the alert infra
+----------------------------------------------------------------
+Needs:
+- Verified and authenticated alert source
+- Precise GPS coordinates and time of incident
+- Rider identity and helmet ID
+- Single alert per incident — no duplicates
+
+Fears:
+- Malicious actors sending fake alerts wasting emergency resources
+- Duplicate alerts sent for the same incident
+- Incomplete or inaccurate location data
+- Alert received with no acknowledgement path back to system
+
+Triggers:
+- Alert dispatched by Alerting Infrastructure after 30-second window expires
 
 
-
+----------------------------------------------------------------
 Actor: [Telemetry Infrastructure]
+----------------------------------------------------------------
+Needs:
+- Persistent listener for incoming telemetry from all active helmets
+- Ability to scale up during peak load (e.g. 8am commute surge)
+- Ability to scale down during low activity (e.g. 12am–4am)
+- Forward telemetry to Processing Infrastructure
+- Receive and relay maintenance flags from helmets
+- Relay firmware updates from Fleet Manager to helmets
 
-Needs:    what they want from the system
-Actively listen to the Telemetry from the riders, store it in DB 
-get data such as maintainace needs from the helmet
-Roll out updates to the helmet
+Fears:
+- Failure to capture telemetry from active helmets
+- Unable to scale fast enough during sudden surge in active helmets
+- Failing to scale down — paying for unused capacity
+- Forwarding corrupted or out-of-order telemetry to Processing Infrastructure
+- Spoofed telemetry received from unauthorized or fake helmet IDs
 
-Fears:    what they don't want to happen
-Telemetry failure to capture data from the riders
-Telemetry infra being unable to scale if the numnber of users increase eg : when a user is going to office such a 8:00 am everyone is starting their bikes and switching their helmets on and 
-the data vol is too much to handle
-Telemetry infra not scaling down despite the number of users decreasing eg : late night or between 12-4 am etc
-Telemetry infra sending corrupted or out of order telemetry data to processing infra 
-
-Triggers: what causes them to interact with the system
-Hemlets will be sending the telemetry data to the Telemetry Infrastructure
-Monitoring infrastructure will be monitoring health of the telemetry infrastructure
-Infrastructure engineer will be interacting to do maintainace
-
-Actor: [Alerting Infrastructure]
-
-Needs:    what they want from the system
-An  API sending an alert to the alerting infrastructure from the processing infra to contact the next of kin and emergency services
-Scale that can handle alerts at scale 
-ability to scale up or scale down based on the volume 
-
-Fears:    what they don't want to happen
-Alert infra unable to cope up with the volume of requests 
-Alerts being delayed 
-Alerts being sent to the wrong next of kin or emergency services
-Alerts being ignored (Maybe a simple SMS or Email with an acknowledgement link or button can solve the problem)
+Triggers:
+- Helmets connecting and transmitting telemetry
+- Monitoring Infrastructure health checks
+- Infrastructure Engineer performing maintenance or configuration changes
+- Firmware update dispatched by Fleet Manager
 
 
-Triggers: what causes them to interact with the system
-Alert API sending an alert to the alerting infra
-
+----------------------------------------------------------------
 Actor: [Processing Infrastructure]
+----------------------------------------------------------------
 
-Needs:    what they want from the system
-Data from the telemetry infra
-A DB to store the data 
-we need to be able to store inforamtion that is coming in too quickly like the live data that is sent by the sensors from the helmet 
-these are high frequency data that are of no use if there are no incidents but they have high write frequency maybe a db that handle like one write requests from 
-for telemetry data from one user per 5 seconds (this is just an example) but what if there were a million users then every second there could be a write request we need to handle that 
-there can be multiple DBs writing telemetry data we need to store data only if there is an  incident that is flagged by the processing infra
-even then we need to store only the last telemetry data that is received before the alert is determined
-maybe there can be two processing infrastructures one is in the hemlet itself rather than sending data to cloud then determninig the incident we determine the incident/alerts
-at the helmet itself and send the alert to the alerting infra either way telemetry data needs to be stored for a limted time say one data or when the helmet switched off manually by the rider 
+Note: Two-tier design — Edge Processing runs on the Helmet itself,
+Cloud Processing runs in AWS. They are separate in design,
+and may share underlying AWS services in implementation.
 
-the cold storage is where we store the permanent data like User Info, next of kin info, emergency services number depending upon the region these are long term storage
-the cold storage will also have to store information like any maintainace needs, maintainace records, telemetry data that is flagged as an incident
-fasle alerts 
+Edge Processing (Helmet):
+- Runs crash detection locally using sensor data
+- Sends only EVENTS (not raw telemetry) to cloud
+- Reduces bandwidth usage and cloud compute load
+- Operates during connectivity loss — buffers events locally
 
-the processing data should also be able to determine a mass sensor failure or infra failure based on threshold like mass alerts
+Cloud Processing (AWS):
+- Receives events from Edge Processing via Telemetry Infrastructure
+- Validates crash events against recent telemetry history
+- Detects mass false positives (maintenance flag) vs genuine incidents
+- Detects mass simultaneous alerts — determines if infrastructure failure
+  vs real mass incident using active helmet headcount threshold
+- Forwards confirmed incidents to Alerting Infrastructure
+- Forwards maintenance flags to Fleet Manager
 
-the first processing infra can send the alert to alert infra, the second processing infra in cloud  can process the recent telemetry data to determine if its a fasle positive or not 
-if there are too many false positives then the second processing infra can flag as maintainace required
+Needs:
+- Telemetry event stream from Telemetry Infrastructure
+- Access to recent telemetry history for validation
+- Defined threshold config for crash vs bump (stored in Parameter Store,
+  not hardcoded — changeable without redeployment)
+- Defined threshold for mass alert detection
+
+Fears:
+- Unable to receive data from Telemetry Infrastructure
+- Unable to differentiate genuine crash from bump, fall, or internet drop
+- Receiving duplicate, corrupted, or out-of-order messages
+- Forwarding too much raw telemetry to Database causing cost explosion
+- Edge processing unit damaged in crash producing invalid events
+- Crafted malicious payloads designed to trigger false crashes at scale
+
+Triggers:
+- Telemetry events arriving from Telemetry Infrastructure
+- Threshold breach detected across fleet (mass alert pattern)
+- Monitoring Infrastructure health check
 
 
-
-
-Fears:    what they don't want to happen
-Unable to receive data from the telemetry infrastructure
-Unable to differentiate between the genuine and false positives(distinguish between a bump and a crash, a hemlet falling down and a crash)
-receiving duplicate, corrupted, or out-of-order messages
-
-Triggers: what causes them to interact with the system
-Telemetry data being fed into the processing infra
-PS:in the implemetation phase they can be part of the telemetry infra but in the design phase they are different  
-
+----------------------------------------------------------------
 Actor: [Database]
+----------------------------------------------------------------
+Needs:
+- Hot Storage: short-lived, high-frequency telemetry data
+  (recent window only — e.g. last 24 hours or until helmet powers off)
+  High write throughput required
+- Cold Storage: long-term, low-frequency persistent data including:
+    - User info and helmet registration
+    - Next of kin contact details
+    - Emergency service contacts by region
+    - Confirmed incident records
+    - False alert logs
+    - Maintenance records and flags
 
-Needs:    what they want from the system
-Information such as Helmet ID, User ID, the telemetry data, maintainace data
-store the alerts, maintainace and the user data, telemetry data 
-We will have two kinds of storage one is hot and one is cold 
-Hot storage will store data for a limted time and it will be telemetry data where write frequency is high like (telemetry data per 5 seconds) 
-Cold storage will store data for a long time and it will be alerts that were created by the processing infra, maintainace and the user data
+Fears:
+- Storage costs growing uncontrolled from raw telemetry accumulation
+- Losing cold storage data (user info, incident records, maintenance history)
+- Hot storage becoming a bottleneck at high write volumes
+- Data written to wrong storage tier
 
-Fears:    what they don't want to happen
-Storage getting full fast and costs increasing
-losing the user user data, incident alert trigger data and maintainace data
+Triggers:
+- Processing Infrastructure forwarding confirmed incident data
+- Telemetry Infrastructure writing recent telemetry to hot storage
+- Scheduled hot-to-cold promotion or hot storage expiry
 
-Triggers: what causes them to interact with the system
-data from the telemetry/processing infra
 
+----------------------------------------------------------------
+Actor: [Alerting Infrastructure]
+----------------------------------------------------------------
+Needs:
+- API endpoint to receive confirmed crash alerts from Processing Infrastructure
+- Ability to contact Next of Kin and Emergency Services simultaneously
+- Scale to handle mass alert volume without degradation
+- Delivery acknowledgement mechanism per alert sent
+- Deduplication — one alert per incident per recipient
+
+Fears:
+- Unable to scale during mass incident (many crashes simultaneously)
+- Alerts delayed — time-critical failure
+- Alert sent to wrong next of kin or wrong emergency service region
+- Alert delivered but no acknowledgement received — unknown if acted on
+- Being used by malicious actor to spam emergency services
+- Alert system itself failing while telemetry pipeline remains healthy
+  (must be independently monitored)
+
+Triggers:
+- Confirmed crash event received from Processing Infrastructure
+- Rider fails to cancel within 30-second window
+- Monitoring Infrastructure health check
+
+
+----------------------------------------------------------------
 Actor: [Monitoring Infrastructure]
+----------------------------------------------------------------
+Needs:
+- Health checks from: Telemetry Infra, Processing Infra,
+  Alerting Infra, Database, CI/CD Pipeline, Cloud Platform
+- Dead man's switch — if monitoring itself goes silent,
+  Infrastructure Engineer must be paged automatically
+- Dashboard visible to Infrastructure Engineer at all times
 
-Needs:    what they want from the system
-health checks from the telemetry infra, alerting infra, processing infra, db
+Fears:
+- Monitoring Infrastructure itself goes down undetected
+- Silent failure — all components report healthy but system is broken
+  (false green — worse than visible failure)
+- Alert to Infrastructure Engineer not delivered when monitoring detects failure
+- Monitoring health checks interfering with production traffic
 
-Fears:    what they don't want to happen
-what if the monitoring infra itself goes down should be able to alert the Infrastructure incharge 
-what if monitoring infra is not able to detect the failure of the telemetry infra, alerting infra, processing infra, db, helmet or smartphone app but everything is shown as healthy
+Triggers:
+- Scheduled health check intervals per component
+- Threshold breach on latency, error rate, or message volume
+- Absence of expected signal from any component (silence = failure)
+- Infrastructure Engineer manually querying dashboard
 
-Triggers: what causes them to interact with the system
-healthcheck data from the telemetry infra, alerting infra, processing infra, db 
+
+----------------------------------------------------------------
+Actor: [CI/CD Pipeline]
+----------------------------------------------------------------
+Needs:
+- Access to infrastructure code repository (Terraform, app code)
+- Scoped AWS credentials to deploy infrastructure changes safely
+- Automated validation (terraform plan, lint, tests) before any deployment
+- Ability to roll back to last known good infrastructure state
+- Audit log of every deployment — who, what, when
+
+Fears:
+- Deploying broken infrastructure to production
+- Partial deployment — pipeline fails mid-way leaving infra in broken state
+- AWS credentials exposed in pipeline logs
+- Infra drift — real infrastructure diverges from code without pipeline knowing
+- No rollback path available when a bad deploy is detected
+
+Triggers:
+- Engineer merges code to main branch
+- Pull request opened — triggers terraform plan for review
+- Scheduled drift detection check (infra matches code?)
+- Manual rollback triggered by Infrastructure Engineer or Fleet Manager
 
 
+----------------------------------------------------------------
 Actor: [Infrastructure Engineer]
+----------------------------------------------------------------
+Needs:
+- Unified view of all infrastructure health via monitoring dashboard
+- Alerts when any component degrades or fails
+- Ability to deploy, update, and rollback infrastructure via CI/CD Pipeline
+- Ability to push firmware updates to helmets via Fleet Manager
+- On-call runbook for known failure scenarios
 
-Needs:    what they want from the system
-a view of all the infrastructure and its health
+Fears:
+- Monitoring Infrastructure goes down with no alert sent
+- Pushing a breaking change to production with no rollback path
+- Not knowing a change caused an incident until riders report it
+- No visibility when infra silently degrades (false green dashboard)
+- Being unavailable when a critical incident occurs with no backup
 
-Fears:    what they don't want to happen
-what if the infrastructure incharge is not available to monitor the system
-what if there is no visbility of the system, what if the monitoring infra itself goes down 
-the monitor infrastructure fails to pickup the failing infras and dosent alert the infrastructure incharge 
+Triggers:
+- Monitoring alert page (on-call)
+- Routine infrastructure health review
+- Deploying infrastructure changes via CI/CD Pipeline
+- Responding to a reported incident
+- Scheduled maintenance window
 
-Triggers: what causes them to interact with the system
-need to view the infrastructure health
-push updates to helmet or infra rollback chnages etc 
 
+----------------------------------------------------------------
+Actor: [Fleet Manager]
+----------------------------------------------------------------
+Needs:
+- Dashboard showing all helmets, their status, battery, and connectivity
+- View of all active alerts and their resolution status
+- Ability to push firmware updates to individual helmets or entire fleet
+- Ability to rollback a bad firmware update to previous stable version
+- Maintenance flag visibility — which helmets need attention before failure
+- Smartphone app monitoring as backup communication path visibility
+
+Fears:
+- Bad firmware update crashing helmet firmware across entire fleet
+  with no rollback path
+- Unable to identify degrading helmets before they fail in the field
+- Too many simultaneous alerts making triage impossible at scale
+- Firmware rollout partially applied — some helmets on old version,
+  some on new, no clear view of fleet version state
+
+Triggers:
+- Routine fleet health monitoring
+- Maintenance flag raised by Processing Infrastructure
+- Firmware update ready for deployment
+- Mass alert event requiring fleet-level triage
+
+
+----------------------------------------------------------------
 Actor: [Cloud Platform]
+----------------------------------------------------------------
+Needs:
+- VPCs, subnets, and security groups to isolate infrastructure components
+- IAM roles and policies — least privilege per service
+- Compute resources that scale with load (serverless preferred where possible)
+- Managed database services with vertical scaling for write throughput
+- Budget alerts and cost visibility dashboards
+- Audit logging for all infrastructure access and changes
 
-Needs:    what they want from the system
-Resources to host all the infra needed like VPCs,subnets, load balancers, DBs, storage, compute resources on cloud,
-Kubernetes can be used to scale the compute resources needed during peak traffic or low traffic
-we will also need to vertically scale the DB wite capability based on the write needs of the system
+Fears:
+- Cloud region or service outage (beyond project scope — acknowledged)
+- Misconfigured IAM exposing infrastructure, data, or APIs to public
+- Misconfigured auto-scaling causing runaway costs
+- Bad configuration pushed by engineer causing infra failure or freeze
+- AWS service limits hit unexpectedly during traffic surge
+- Secrets or credentials accidentally committed to code repository
+
+Triggers:
+- Infrastructure Engineer or CI/CD Pipeline deploys or modifies resources
+- Auto-scaling event triggered by load increase or decrease
+- Budget threshold breached
+- Security event detected (unauthorized access attempt)
 
 
-Fears:    what they don't want to happen
-Cloud hosting the infra itself goes down
-a bad configuration pushed by the engineer can cause the infra to fail either keep the infra from scaling or from scaling down or infra crashing 
-costs increasing beyond the budget 
-bad configuration exposing the infra, application and db to the malicious actors 
-
-Triggers: what causes them to interact with the system
-infrastructure engineers change configurations 
-cloud scaling up or down resources based on the needs of the infra 
-budget being overrrun
-
-Actor: [Fleet Manger]
-
-Needs:    what they want from the system
-Ability to view all the helmets and their health
-Ability to view all the alerts and their status
-Ability to view all the telemetry data and its status
-ability to push updates to helmet or rollback chnages etc 
-ability to monitor smartphone too to act as backup
-
-Fears:    what they don't want to happen
-Too many numbers in a single fleet(maybe AI can help here)
-bad update resulting in crash of firmware/smartphone application (need ability to rollback to previous stable version)
-Unable to identify which helmets need maintenance before they fail
-
-Triggers: what causes them to interact with the system
-Need to monitor the fleet
+================================================================
+END OF ACTORS LIST
+Next phase: Data Flow Diagram
+================================================================
