@@ -1,12 +1,15 @@
 Actor: [helmet]
 
 Needs: what they want from the system   
-A smart Helmet hardware that can alert emergency services in case of an accident,
-displays speed, maybe in the future it can display navigation instructions(like ability to overtake a vehilce in front)
-shows a display that an  alers will be sent to the emergency services if the rider doesn't respond in 30 seconds ability to cancel the alert
-shows them the health of comms with the server is the helmet cutoff or not from the server maybe a small green indicator to show that the helmet is connected to the server
+Sufficient power to operate sensors
+Compute capacity to run the edge operations
+Ability to communicate with the Telemetry Infrastructure
+Ability to communicate with the Smartphone
+Bluetooth interface to connnect with Smartphone
 
 Fears:    what they don't want to happen
+what if a user dosent have smarpthone(very unlikely but its a must have a requirement)
+failing to connect with smarpthone
 Sending fasle alerts without alerting the rider 
 rider ignoring the fasle positive alerts being sent 
 helmet sensors failed/corrrupted sending false data need an in built health check for sensors that can alert the need for maintainance
@@ -35,6 +38,25 @@ Helmet failing to connect to the Telemetry infrastructure and/or Alerting infras
 Triggers: what causes them to interact with the system
 cancelling an alert being sent to the emergency services or next of kin 
 
+Actor: [Smartphone]
+
+Needs:    what they want from the system
+Connectivity to Helmet
+receive data from Helmet
+conectivity to telemetry infra
+smarpthone is what will be sending data to telemetry infra as there wont be need to creating a long range communication system bluetooth maybe can save power also
+can use phone storage to store buffer data also
+Smartphone can also act a sensor incase the helmet sensors fail(can be implemented later as a fallback) can also act as authentication prevent malicious activities
+
+Fears:    what they don't want to happen
+Failure to connect with helmet
+Failure to register the helmet or user with Cloud
+smartphone can become a single point of failure to communicate with the telemetry infra
+Triggers: what causes them to interact with the system
+Switching on the helmet and connecting to the Smartphone
+Bluetooth failing 
+lack of bandwidth
+external interferance
 
 Actor: [Next of Kin]
 Needs:    what they want from the system
@@ -149,6 +171,7 @@ health checks from the telemetry infra, alerting infra, processing infra, db
 
 Fears:    what they don't want to happen
 what if the monitoring infra itself goes down should be able to alert the Infrastructure incharge 
+what if monitoring infra is not able to detect the failure of the telemetry infra, alerting infra, processing infra, db, helmet or smartphone app but everything is shown as healthy
 
 Triggers: what causes them to interact with the system
 healthcheck data from the telemetry infra, alerting infra, processing infra, db 
@@ -171,14 +194,21 @@ push updates to helmet or infra rollback chnages etc
 Actor: [Cloud Platform]
 
 Needs:    what they want from the system
-hosts all the infrastructure
+Resources to host all the infra needed like VPCs,subnets, load balancers, DBs, storage, compute resources on cloud,
+Kubernetes can be used to scale the compute resources needed during peak traffic or low traffic
+we will also need to vertically scale the DB wite capability based on the write needs of the system
+
 
 Fears:    what they don't want to happen
 Cloud hosting the infra itself goes down
-maybe create a backup but that is costly and seem like beyond the scope of this project 
+a bad configuration pushed by the engineer can cause the infra to fail either keep the infra from scaling or from scaling down or infra crashing 
+costs increasing beyond the budget 
+bad configuration exposing the infra, application and db to the malicious actors 
 
 Triggers: what causes them to interact with the system
-infrastructure engineers interact with cloud the very infra lives in cloud
+infrastructure engineers change configurations 
+cloud scaling up or down resources based on the needs of the infra 
+budget being overrrun
 
 Actor: [Fleet Manger]
 
@@ -186,9 +216,13 @@ Needs:    what they want from the system
 Ability to view all the helmets and their health
 Ability to view all the alerts and their status
 Ability to view all the telemetry data and its status
+ability to push updates to helmet or rollback chnages etc 
+ability to monitor smartphone too to act as backup
 
 Fears:    what they don't want to happen
-Too many numbers in a single fleet(,maybe AI can help here)
+Too many numbers in a single fleet(maybe AI can help here)
+bad update resulting in crash of firmware/smartphone application (need ability to rollback to previous stable version)
+Unable to identify which helmets need maintenance before they fail
 
 Triggers: what causes them to interact with the system
 Need to monitor the fleet
