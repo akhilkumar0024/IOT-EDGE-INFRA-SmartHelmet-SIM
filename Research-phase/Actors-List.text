@@ -1,16 +1,23 @@
-Actor: [helmet/smartphone]
+Actor: [helmet]
+
 Needs: what they want from the system   
-A smart Helmet that can alert emergency services in case of an accident,
+A smart Helmet hardware that can alert emergency services in case of an accident,
 displays speed, maybe in the future it can display navigation instructions(like ability to overtake a vehilce in front)
 shows a display that an  alers will be sent to the emergency services if the rider doesn't respond in 30 seconds ability to cancel the alert
 shows them the health of comms with the server is the helmet cutoff or not from the server maybe a small green indicator to show that the helmet is connected to the server
+
 Fears:    what they don't want to happen
-helmet sensors failed/corrupted sending false data need an in build health check for sensors 
+Sending fasle alerts without alerting the rider 
+rider ignoring the fasle positive alerts being sent 
+helmet sensors failed/corrrupted sending false data need an in built health check for sensors that can alert the need for maintainance
 A fasle alarm being sent to Emergency Services, or next to kin causing a panic and costs or legal issues 
+malicious actions like hacking or tampering or simulating a crash
+Not being able to send Telemetry to the Telemetry system
+
 Triggers: what causes them to interact with the system
 A alert being sent to the emergency services or next of kin and they want to cancel it 
 wearing the helmet and switching it on 
-Not being able to send Telemetry to the Telemetry system
+
 
 
 
@@ -20,20 +27,21 @@ A smart Helmet that can alert emergency services in case of an accident,
 displays speed, maybe in the future it can display navigation instructions(like ability to overtake a vehilce in front)
 shows a display that an  alers will be sent to the emergency services if the rider doesn't respond in 30 seconds ability to cancel the alert
 shows them the health of comms with the server is the helmet cutoff or not from the server maybe a small green indicator to show that the helmet is connected to the server
+
 Fears:    what they don't want to happen
+Sending fasle alerts without the knowledge of the rider 
 A fasle alarm being sent to Emergency Services, or next to kin causing a panic and costs or legal issues 
+Helmet failing to connect to the Telemetry infrastructure and/or Alerting infrastructure
 Triggers: what causes them to interact with the system
 cancelling an alert being sent to the emergency services or next of kin 
-someone else using the helmet 
-rider ignoring the fasle positive alerts or ignoring the alert being sent 
-malicious actions like hacking or tampering or simulating a crash
+
 
 Actor: [Next of Kin]
 Needs:    what they want from the system
 a relible method to know that they are getting the message from a genuine actor and not from a malicious actor
 Fears:    what they don't want to happen
 a malicious actor luring next of kin or spreading panic 
-techinal jargon instead or a humane message
+techinal jargon instead or a human friendly information message
 Triggers: what causes them to interact with the system
 an alert from the alert infra
 
@@ -49,73 +57,138 @@ an alert from the alert infra
 
 
 Actor: [Telemetry Infrastructure]
+
 Needs:    what they want from the system
-Actively listen to the Telemetry from the riders, store it and process it(maybe processing can be done by another system good to sepatate concerns)
-get data such as maintainace data 
+Actively listen to the Telemetry from the riders, store it in DB 
+get data such as maintainace needs from the helmet
+Roll out updates to the helmet
+
 Fears:    what they don't want to happen
 Telemetry failure to capture data from the riders
 Telemetry infra being unable to scale if the numnber of users increase eg : when a user is going to office such a 8:00 am everyone is starting their bikes and switching their helmets on and 
 the data vol is too much to handle
-Telemetry infra not scaling down despite the number of users decreasing eg : late night or between 12-4 am etc 
+Telemetry infra not scaling down despite the number of users decreasing eg : late night or between 12-4 am etc
+Telemetry infra sending corrupted or out of order telemetry data to processing infra 
+
 Triggers: what causes them to interact with the system
-a rider wont be interacting with the Telemetry infra but a system that uses the telemetry data will be interacting with the Telemetry infra to get the telemetry data store it and process it
-an engineer will also monitoriing the telemetry infra via a monitoriing stack 
+Hemlets will be sending the telemetry data to the Telemetry Infrastructure
+Monitoring infrastructure will be monitoring health of the telemetry infrastructure
+Infrastructure engineer will be interacting to do maintainace
 
 Actor: [Alerting Infrastructure]
+
 Needs:    what they want from the system
-They Actively take the input from the Alerting API and send the alert that needs to be sent to the emergency services && next of kin
+An  API sending an alert to the alerting infrastructure from the processing infra to contact the next of kin and emergency services
+Scale that can handle alerts at scale 
+ability to scale up or scale down based on the volume 
+
 Fears:    what they don't want to happen
-Alerting infra not being able to correctly contact the emergency services if too many crashed are happening and are not able to address the needs ie infra not being able to scale
+Alert infra unable to cope up with the volume of requests 
+Alerts being delayed 
+Alerts being sent to the wrong next of kin or emergency services
+Alerts being ignored (Maybe a simple SMS or Email with an acknowledgement link or button can solve the problem)
+
+
 Triggers: what causes them to interact with the system
-Alerting API sending an alert to the alerting infra
+Alert API sending an alert to the alerting infra
 
 Actor: [Processing Infrastructure]
+
 Needs:    what they want from the system
-data from the telemetry infra
+Data from the telemetry infra
+A DB to store the data 
+we need to be able to store inforamtion that is coming in too quickly like the live data that is sent by the sensors from the helmet 
+these are high frequency data that are of no use if there are no incidents but they have high write frequency maybe a db that handle like one write requests from 
+for telemetry data from one user per 5 seconds (this is just an example) but what if there were a million users then every second there could be a write request we need to handle that 
+there can be multiple DBs writing telemetry data we need to store data only if there is an  incident that is flagged by the processing infra
+even then we need to store only the last telemetry data that is received before the alert is determined
+maybe there can be two processing infrastructures one is in the hemlet itself rather than sending data to cloud then determninig the incident we determine the incident/alerts
+at the helmet itself and send the alert to the alerting infra either way telemetry data needs to be stored for a limted time say one data or when the helmet switched off manually by the rider 
+
+the cold storage is where we store the permanent data like User Info, next of kin info, emergency services number depending upon the region these are long term storage
+the cold storage will also have to store information like any maintainace needs, maintainace records, telemetry data that is flagged as an incident
+fasle alerts 
+
+the processing data should also be able to determine a mass sensor failure or infra failure based on threshold like mass alerts
+
+the first processing infra can send the alert to alert infra, the second processing infra in cloud  can process the recent telemetry data to determine if its a fasle positive or not 
+if there are too many false positives then the second processing infra can flag as maintainace required
+
+
+
+
 Fears:    what they don't want to happen
-fasle positives is what we want to prevent, differentiate between a bump and a crash handle scenarios where the internet drop offs is not seen as a crash 
+Unable to receive data from the telemetry infrastructure
+Unable to differentiate between the genuine and false positives(distinguish between a bump and a crash, a hemlet falling down and a crash)
 receiving duplicate, corrupted, or out-of-order messages
+
 Triggers: what causes them to interact with the system
 Telemetry data being fed into the processing infra
 PS:in the implemetation phase they can be part of the telemetry infra but in the design phase they are different  
 
 Actor: [Database]
+
 Needs:    what they want from the system
-Information such as Helmet ID, User Id, the telemetry data, maintainace data
-store the alerts data maintainace data and the user data like user id and helmet ID 
-we dont need to store the telemetry data for long term maybe one day is enough and that too only the latest but that would mean too many writes its costly (in terms of money)
-maybe data should pass through the processing infra before being written into the db since we will need only the latest incident data onyl for creating alerts etc need to think about this 
+Information such as Helmet ID, User ID, the telemetry data, maintainace data
+store the alerts, maintainace and the user data, telemetry data 
+We will have two kinds of storage one is hot and one is cold 
+Hot storage will store data for a limted time and it will be telemetry data where write frequency is high like (telemetry data per 5 seconds) 
+Cold storage will store data for a long time and it will be alerts that were created by the processing infra, maintainace and the user data
+
 Fears:    what they don't want to happen
 Storage getting full fast and costs increasing
-hot and cold storage can be useed but i dont think we need store the data for every telemetry data that is send every 5 seconds 
 losing the user user data, incident alert trigger data and maintainace data
+
 Triggers: what causes them to interact with the system
 data from the telemetry/processing infra
 
 Actor: [Monitoring Infrastructure]
+
 Needs:    what they want from the system
 health checks from the telemetry infra, alerting infra, processing infra, db
+
 Fears:    what they don't want to happen
 what if the monitoring infra itself goes down should be able to alert the Infrastructure incharge 
-Triggers: what causes them to interact with the system
-data from the telemetry infra, alerting infra, processing infra, db
 
-Actor: [Infrastructure incharge]
+Triggers: what causes them to interact with the system
+healthcheck data from the telemetry infra, alerting infra, processing infra, db 
+
+
+Actor: [Infrastructure Engineer]
+
 Needs:    what they want from the system
 a view of all the infrastructure and its health
+
 Fears:    what they don't want to happen
 what if the infrastructure incharge is not available to monitor the system
 what if there is no visbility of the system, what if the monitoring infra itself goes down 
 the monitor infrastructure fails to pickup the failing infras and dosent alert the infrastructure incharge 
+
 Triggers: what causes them to interact with the system
 need to view the infrastructure health
 push updates to helmet or infra rollback chnages etc 
 
 Actor: [Cloud Platform]
+
 Needs:    what they want from the system
 hosts all the infrastructure
+
 Fears:    what they don't want to happen
 Cloud hosting the infra itself goes down
 maybe create a backup but that is costly and seem like beyond the scope of this project 
+
 Triggers: what causes them to interact with the system
 infrastructure engineers interact with cloud the very infra lives in cloud
+
+Actor: [Fleet Manger]
+
+Needs:    what they want from the system
+Ability to view all the helmets and their health
+Ability to view all the alerts and their status
+Ability to view all the telemetry data and its status
+
+Fears:    what they don't want to happen
+Too many numbers in a single fleet(,maybe AI can help here)
+
+Triggers: what causes them to interact with the system
+Need to monitor the fleet
