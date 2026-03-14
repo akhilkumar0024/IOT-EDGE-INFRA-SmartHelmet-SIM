@@ -76,3 +76,79 @@
 [Telemetry Infrastructure] → [Cold Storage] : counter reset event logged, helmet ID, timestamp, reset authorised by Fleet Manager : immediately
 
 
+# Startup Sequence — Sad Path 2 Sub-scenario A : Smartphone has no internet
+
+[Smartphone] → [Helmet] : no internet connectivity detected : on connectivity check
+[Helmet HUD] → [Rider] : "No internet connectivity — telemetry and alert system not operational" : immediately
+[Smartphone App] → [Rider] : "No internet connectivity — alert system not operational" : immediately
+
+# Helmet continues collecting and forwarding data to smartphone
+[Helmet Sensors] → [Helmet] : accelerometer, speed, edge result, helmet ID, timestamp : every 1 second
+[Helmet] → [Smartphone] : telemetry payload, helmet ID, timestamp : every 1 second
+[Smartphone] → [Smartphone Local Storage] : telemetry payload : every 1 second, until internet restores
+
+# On internet restore
+[Smartphone] → [Helmet HUD] : "Internet connectivity restored" : on connectivity restore
+[Smartphone App] → [Rider] : "Internet connectivity restored — telemetry and alert system operational" : immediately
+
+# Backlog flush via catch-up channel
+[Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : 50 second chunk of backlog data, chunk sequence number, helmet ID, timestamp range : starting from oldest unacknowledged chunk
+[Telemetry Infrastructure] → [Smartphone] : chunk acknowledgement, chunk sequence number : on receiving full 50 second chunk
+[Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : next 50 second chunk : on receiving acknowledgement of previous chunk
+
+# Partial chunk or no acknowledgement
+[Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : resend same chunk in full : if no acknowledgement received within timeout
+
+# Duplicate chunk detection
+[Telemetry Infrastructure] → [Telemetry Infrastructure] : check timestamp range against existing Hot Storage entries : on every chunk receive
+[Telemetry Infrastructure] → [Telemetry Infrastructure] : discard duplicate chunk : if timestamp range already exists in Hot Storage
+[Telemetry Infrastructure] → [Smartphone] : acknowledgement : on duplicate detected, so smartphone moves to next chunk
+
+# Live data resumes normal flow alongside catch-up channel
+[Smartphone] → [Telemetry Infrastructure — Live Channel] : JSON array of 10 telemetry payloads + GPS + user ID + batch timestamp : every 10 seconds
+[Telemetry Infrastructure] → [Hot Storage] : live batch payload : on every receive
+[Telemetry Infrastructure] → [Hot Storage] : acknowledged chunk payload : on each confirmed chunk
+
+# Backlog fully flushed
+[Smartphone] → [Smartphone] : all chunks acknowledged, backlog fully flushed : after final chunk acknowledgement received
+[Smartphone] → [Smartphone Local Storage] : clear backlog data : immediately after full flush confirmed
+
+
+# Startup Sequence — Sad Path 2 Sub-scenario B : Telemetry Infrastructure unreachable
+
+[Smartphone] → [Telemetry Infrastructure] : connectivity check : after bluetooth pairing confirmed
+[Telemetry Infrastructure] → [Smartphone] : no response : —
+
+[Smartphone App] → [Rider] : "Telemetry Infrastructure unreachable — not a device issue, please be patient" : immediately
+[Helmet HUD] → [Rider] : "Telemetry Infrastructure unreachable — alert and telemetry systems not operational" : immediately
+
+# Infrastructure side — outage detection
+[Monitoring Infrastructure] → [Telemetry Infrastructure] : health check : at regular intervals
+[Telemetry Infrastructure] → [Monitoring Infrastructure] : no response : —
+[Monitoring Infrastructure] → [Infrastructure Engineer] : outage alert, telemetry infrastructure unreachable, timestamp : after health check failure threshold crossed
+
+# Helmet and smartphone behaviour during outage — same as Sub-scenario A
+[Helmet Sensors] → [Helmet] : accelerometer, speed, edge result, helmet ID, timestamp : every 1 second
+[Helmet] → [Smartphone] : telemetry payload, helmet ID, timestamp : every 1 second
+[Smartphone] → [Smartphone Local Storage] : telemetry payload : every 1 second until infra restores
+
+# On Telemetry Infrastructure restore
+[Monitoring Infrastructure] → [Telemetry Infrastructure] : health check : at regular intervals
+[Telemetry Infrastructure] → [Monitoring Infrastructure] : health check passed : on recovery
+[Monitoring Infrastructure] → [Infrastructure Engineer] : telemetry infrastructure restored, timestamp : immediately
+[Smartphone] → [Helmet HUD] : "Telemetry Infrastructure restored" : on successful connectivity check
+[Smartphone App] → [Rider] : "Telemetry Infrastructure restored — telemetry and alert systems operational" : immediately
+
+# Backlog flush and clear — identical to Sub-scenario A
+[Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : 50 second chunk of backlog data, chunk sequence number, helmet ID, timestamp range : starting from oldest unacknowledged chunk
+[Telemetry Infrastructure] → [Smartphone] : chunk acknowledgement, chunk sequence number : on receiving full 50 second chunk
+[Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : next 50 second chunk : on receiving acknowledgement of previous chunk
+[Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : resend same chunk in full : if no acknowledgement received within timeout
+[Telemetry Infrastructure] → [Telemetry Infrastructure] : check timestamp range against existing Hot Storage entries : on every chunk receive
+[Telemetry Infrastructure] → [Telemetry Infrastructure] : discard duplicate chunk : if timestamp range already exists in Hot Storage
+[Telemetry Infrastructure] → [Smartphone] : acknowledgement : on duplicate detected
+[Smartphone] → [Telemetry Infrastructure — Live Channel] : JSON array of 10 telemetry payloads + GPS + user ID + batch timestamp : every 10 seconds
+[Telemetry Infrastructure] → [Hot Storage] : live batch payload : on every receive
+[Telemetry Infrastructure] → [Hot Storage] : acknowledged chunk payload : on each confirmed chunk
+[Smartphone] → [Smartphone] : all chunks acknowledged, backlog fully flushed : after final chunk acknowledgement received
+[Smartphone] → [Smartphone Local Storage] : clear backlog data : immediately after full flush confirmed
