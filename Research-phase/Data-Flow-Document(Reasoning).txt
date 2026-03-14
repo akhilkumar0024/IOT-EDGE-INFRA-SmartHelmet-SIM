@@ -1,0 +1,75 @@
+Normal Telemetry path (Happy path) when the User Wears a helmet to Data reaching the cloud 
+
+I think the first thing that a user does is connecting the Helmet to the Smartphone via the bluetooth 
+The Helmet should display the connection successfull message, the smartphone should also display the same 
+the smartphone should confirm the conenction to telemetry infra is up 
+The helmet should first run a health check of the sensors on board to see if any maintainance is required 
+if all ok the second thing a helmet should do is 
+ check the buffer storage if it has any data stored in it if there is it send it to the telemetry infra using the smartphone's internet connection 
+ as smartphone is the one which can transmit the data to the cloud via an app 
+
+Now here comes the scenarios that am thinking 
+A. Its a normal day no incidents have taken place(happy path)
+The buffer has no data, all the conncetion and the helath checks are positive if so the user can continue the normat operation the helmets begins 
+sending information to the Smarpthone(telemetry information) and the telemetry information is sent by the smarphone to the cloud(am thinking the
+ helmet can send the telemetry information every second to the smartphone but smartphone send the data as a batch only once in 10secs this way we 
+ can reduce the write frequecy but i guess that is not something for this document)
+thats the happy path 
+
+B one more scenario that popped into my mind during the happy path is there is data in the buffer storage suppose the battery died for the smartphone 
+and the helmet detected it and stored all the sensor data in the buffer storage now it will send the data in the buffer storage to the smarphone and the 
+smartphone will send that data to the cloud(telemetry info) from where the processing infra will process the information to see if there were any alert 
+events captured by the helmet if there were no incidents the processing infra will store the information for 24hrs and then remove from the helmet,
+ this is also a happy path but where some information was still in the buffer storage of the helmet 
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Sad Path 1 — Bluetooth pairing fails
+The helmet powers on, tries to pair with the smartphone, and gets no response or a failed pairing.
+What should happen? 
+
+What does the rider see?
+Rider should see the helmet is not connected to the smartphone, and the telemetry systems are not operational, and the alert system is not operational
+It should display what the helmet is trying to do, like trying to connect to the smartphone, and it should also display the number of retries left in that poweron
+event
+
+Does the helmet keep retrying or give up immediately?
+It should not give up immediately, instead it should have atleast 5 tries for that poweron
+
+Is there a maximum number of retries before it stops?
+The maximum number of tries should be 5 per poweron
+
+After it stops retrying — what state is the helmet in?
+If the helmet never manages to connect to the smartphone even after 5 retries it should now display the message to visit the maintainance shop, 
+one thing it should never do i clear the buffer memory on its own under not circumstancer until the confirmation is revieved from the smartphone that the data is 
+successfully uploaded in the cloud, this is to ensure that the data is not lost
+and it should keep track of each retry in memory if the cumulative retry ever croses a number like(50) in all the powerons it suggest a maintainance issue and shoukld
+advice the user to take helmet for maintainance
+
+
+
+
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Sad Path 2 — Connectivity check fails
+Bluetooth pairing succeeded, helmet and smartphone are connected. But when the smartphone tries to reach Telemetry Infrastructure — no response.
+What should happen? Think about:
+
+What does the rider see on the helmet HUD and smartphone app?
+In helmet HUD and the Smartphone there should be message that connction to Telemetry infra failed 
+On Helmet HUD the display should make it clear that it is not a Helmet Issue but could be an  issue in the App or the Infra 
+it should clearly say where the issue is if the issue is in the app ? the smarthphones internet connectivity or the Telemetry Infra itself
+If in case of a problem with the App it should alert the App owner(i dont think we have defined an actor that owns the appp maybe its the Infrastructure engineer is the app part of the telemetry infra)
+either way in this simulation the smartphone is just a python sctipt
+if in case of the infra it should be picked up by the monotoring infra an alerts should be sent to the Infrastructure engineer 
+Does the smartphone keep retrying or give up immediately?
+The smartphones retry can be similar to the helmets connctivity to the smartphone, it should have a retry limit of 5
+maintainance should be adviced like the helmet, to reach out to the nearest store or the maintainance shop or update the app if update is available 
+Should there be a retry limit like bluetooth had, or is this different since internet connectivity can fluctuate more naturally?
+i think here there can be multiple sub scenarios from internet failure to infra failure each need to be determined independently and the correct action needs to be recommended
+While retrying — can the helmet still collect and buffer sensor data even though cloud is unreachable?
+If the cloud is unreachable the alert system wont function hence the user should be informed that the alert system isnt available althought it should store data in the buffer
+and send it to the smarthphone sinc it will have a larger storage 
+After retries are exhausted — what state is the system in? Can the rider still ride?
+The rider can still ride the information will still be collected and sent to the smarthphone but the rider will be informed that alert and telemetry functions are not operational
