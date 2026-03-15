@@ -101,3 +101,86 @@ On the infrastructure side — who detects the outage and how?
 The Monitoring infra detects the outage through constant health checks
 What happens when telemetry infra comes back up — is the restore flow the same as Sub-scenario A?
 Yes i think the flow should be the same 
+
+
+Sub-scenario C :helmet syncs buffer to smartphone, but smartphone fails to forward it to Telemetry Infrastructure
+Does the smartphone retry? How many times, for how long?
+This time the smartphone has the internet, the telemetry infra is up and running but the smartphone is not able to forward the data to the telemetry infra
+its its the sync that is failing that means either Db is full, or data is corrupted(we have already handled the case of infra being not availbale earlier didnt we)
+now the question is of DB being full or data being corrupt 
+If the DB is full ideally the  monitoring infra should  alert the infrastructure engineer before a thereshold is even breeched and the infrastructure engineer should be able to clear the DB
+should provision the resources to make db available for the new write unti then the smartphone should hold the data locally unti the infra is back up
+
+Now comes the more complex scenario where the data is corrupt
+Honeslty i dont know what to do in this scenario, since the buffer in the helmet isnt cleared yet we can ask the helmet to send the buffered data again 
+and attempt to sync again, if even that fails we can start procedure to find where the fault is why is the data getting corrupt 
+
+What does the helmet do while waiting for sync confirmation that never comes?
+Ther are two cases in this if its just the sync of buffer that is failing or no data is able to reach the telemetry
+If no data is able to reach the telemetry we can show that Alert and telemetry infra is not operational
+if only buffer is failing to be operational we can inform that buffer data is failing to sync but the alert and telemetry infra is operational
+
+What does the rider see on the HUD and app?
+I believe i have already answerd this question before for each scenario
+Does this eventually fall into the same catch-up channel flow as Sad Path 2, or is it handled differently?
+every buffer sync will have to use the catch-up channel for syncing 
+
+
+
+Crash Detection and Alert Flow
+
+On the helmet side
+
+What does the helmet detect and how does it decide it's a crash — is that decision made on the helmet or in the cloud?
+
+The helmet detects the Crash based on the data given by the sensors in the helmet such as sudden change in accelaration 
+the primary computation will happen at the Helmet level which will flag and accident, send it to smartphone which will send it 
+to the cloud (Telemetry Infra) the processing infra will look at the data has come which is tagged as crash, the processing infra will make
+the final call and decide based on the previous telemetry data that was sent to decide a false flag or an actual crash
+based on this the alert will be made to the next of kin and Emergency services ofc the data is logged in cold storage also for permanent duration
+
+What does the rider see on the HUD the moment a potential crash is detected?
+
+The rider will see the alert window pop up on the helmet HUD and the app 
+What happens to telemetry during the 30 second window — does it keep flowing normally?
+
+the telemetry will keep happening through out if its possible if all the sensors are functional and telemetry is possible despite 
+the crash this is where the MQTT can be utilised maybe even when the helmet registers a crash
+
+On the alert window
+
+The 30 second countdown starts — where does it start, on the helmet or in the cloud?
+the 30Sec count down start on the helmet and the cloud it can be cancelled from either the helmet or the app
+The rider can cancel from either HUD or smartphone — what happens on the other device when one of them cancels?
+if one of them cancels the alert dies and countdown stops no alerts are sent
+What if the helmet HUD is damaged in the crash — can the rider still cancel from the smartphone alone?
+Yes to cancel the alert he has the option to cancel from any place he chooses 
+
+On the cloud side
+
+Who receives the crash event first — Telemetry Infrastructure or Processing Infrastructure directly?
+The crash event is received on the telemetry infra all information come directly on the telemetry infra 
+if a data has crash flag or tag then the processing infra takes a relook at the previous telemetry data that was sent 
+before a crash was flagged by the helmet edge computing the processing infra double verfies the data instead of every data that comes basically
+the data/event that is tagged as crash by the edge computer in the helmet acts as a filter 
+
+Processing Infrastructure validates the crash against recent telemetry history — what does that mean practically, what is it checking?
+the processing infra is cheking various things like what was the previous 10 or 30 second speed of the driver was it high ? was there a curve that was coming 
+was there traffic etc basically to check if its a false flag or an actual crash 
+What does Processing Infrastructure do if it decides the crash is a false positive?
+if it decides the crash is a false positive it will not send the alert to the next of kin or emergency services but will log it in cold storage since an alert was raised by the helmet sensors 
+
+
+On alert delivery
+
+If the rider doesn't cancel — who gets alerted, in what order, and what information do they receive?
+If the rider dosent cancel the alert the Next of Kin and emergency services are alerted, the emergency services are given the usefull data like current location,
+the speed while the crash occured, contact of the next of kin 
+the next of kin should recieve a humane message informing about the crash, the location and an information that the emergency services are informed or not 
+
+What happens if the alert to Next of Kin or Emergency Services fails to deliver?
+The alert is the main funciton it cannot fail, the system keeps retrying atleast one of them are informed, if no one gets informed it the data will be reatined permanently 
+in the cloud for later use or for retrying to contact again
+Either way — cancelled or not — what gets written to storage?
+In the storage the alert raised, the time the loactation basically the telemetry of last one minute gets added to permanent storage
+
