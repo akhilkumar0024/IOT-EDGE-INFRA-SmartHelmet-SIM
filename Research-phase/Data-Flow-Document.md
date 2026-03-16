@@ -290,137 +290,101 @@
 [Monitoring Infrastructure] → [Infrastructure Engineer] : TTL expiry alert, helmet ID, chunk timestamp range, timestamp : immediately on log entry written
 
 
-# Startup Sequence — Sad Path 2 Sub-scenario C : Buffer sync fails on forward to Telemetry Infrastructure
+# Phone Dead During Crash — Precondition
+# Rider is mid-ride
+# Smartphone is completely off — not low battery, fully dead
+# Helmet is active, sensors running normally
+# No bluetooth connection between helmet and smartphone
 
-# Context: Helmet has buffered data → successfully sent to smartphone via bluetooth
-# Smartphone has internet, Telemetry Infrastructure is up, but forward fails
-# Helmet buffer is NOT cleared until full ack chain completes
-# TTL for unconfirmed chunks = 24 hours (stored in Parameter Store)
+# Crash detected by helmet edge processing
+[Helmet Sensors] → [Helmet] : accelerometer spike, speed data, edge result flagged as crash, helmet ID, timestamp : on crash detection
+[Helmet] → [Helmet] : check for smartphone connection : immediately on crash detection
+[Helmet] → [Helmet] : no smartphone connection detected : immediately
 
-# Rider status during sync attempt
-[Smartphone App] → [Rider] : "Data sync in progress" : on receiving buffered data from helmet
-[Helmet HUD] → [Rider] : "Data sync in progress" : on receiving buffered data from helmet
-[Smartphone App] → [Rider] : "Alert and telemetry systems operational" : on connectivity confirmed
-[Helmet HUD] → [Rider] : "Alert and telemetry systems operational" : on connectivity confirmed
+# No cloud path — helmet buffers and waits
+[Helmet] → [Helmet] : store crash event + surrounding telemetry in buffer : immediately
+[Helmet HUD] → [Rider] : "Alert system unavailable — event data stored" : immediately
+# No 30 second countdown
+# No alert window
+# No action required from rider
 
-# Smartphone forwards buffer to Telemetry Infrastructure via catch-up channel
-[Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : 50 second chunk of backlog data, chunk sequence number, helmet ID, timestamp range : starting from oldest chunk
+# Helmet continues operating
+[Helmet Sensors] → [Helmet] : accelerometer, speed, edge result, helmet ID, timestamp : every 1 second
+[Helmet] → [Helmet] : store all telemetry in buffer : every 1 second
+# No cloud path — buffer only
 
-# -----------------------------------------------------------------------
-# Case 1 — DB Full
-# -----------------------------------------------------------------------
+# Phone revives — normal startup sequence runs
+[Smartphone] → [Helmet] : bluetooth pairing request : on smartphone power on
+[Helmet] → [Smartphone] : pairing confirmation : on successful bluetooth connection
+[Smartphone] → [Telemetry Infrastructure] : connectivity check : after bluetooth pairing confirmed
+[Telemetry Infrastructure] → [Smartphone] : connectivity confirmation : on receiving connectivity check
 
-# Infra rejects with storage full error
-[Telemetry Infrastructure] → [Smartphone] : storage full error, chunk sequence number : on write rejection
+# Catch-up sync initiates automatically — no special trigger
+# Both devices check local storage for unsynced data
+# Buffer contains pre-crash telemetry + crash event + post-crash telemetry
+# All treated as regular buffered data — crash flag is just another datapoint
 
-# Rider informed
-[Smartphone App] → [Rider] : "Buffer sync paused — cloud storage full, retrying when resolved" : immediately
-[Helmet HUD] → [Rider] : "Buffer sync paused — cloud storage issue, alert system still operational" : immediately
+[Helmet] → [Smartphone] : buffered telemetry data including crash event, helmet ID, timestamp range : on successful pairing
+[Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : 50 second chunk of backlog data, chunk sequence number, helmet ID, timestamp range : starting from oldest unacknowledged chunk
+[Telemetry Infrastructure] → [Smartphone] : chunk acknowledgement, chunk sequence number : on receiving full 50 second chunk
+[Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : next 50 second chunk : on receiving acknowledgement of previous chunk
 
-# Monitoring infra detects storage threshold breach
-[Monitoring Infrastructure] → [Telemetry Infrastructure] : storage utilisation check : at regular intervals
-[Monitoring Infrastructure] → [Infrastructure Engineer] : storage full alert, helmet ID, timestamp : when threshold breached
+# Telemetry Infrastructure forwards to Processing Infrastructure
+[Telemetry Infrastructure] → [Processing Infrastructure] : synced buffered data : on each acknowledged chunk
+[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data : immediately
 
-# Smartphone holds chunk locally until infra recovers
-[Smartphone] → [Smartphone Local Storage] : retain chunk, mark as undelivered : immediately on storage full error
-
-# Infrastructure Engineer provisions storage
-[Infrastructure Engineer] → [Telemetry Infrastructure] : provision additional storage : on receiving alert
-
-# On storage restored — resume catch-up channel flow
-[Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : retry undelivered chunk, chunk sequence number, helmet ID, timestamp range : on storage restored
-[Telemetry Infrastructure] → [Smartphone] : chunk acknowledgement, chunk sequence number : on successful write
-[Smartphone] → [Helmet] : sync acknowledgement for cleared chunk : immediately
-[Helmet] → [Helmet] : clear that chunk from buffer storage : on receiving acknowledgement
-[Smartphone] → [Smartphone Local Storage] : clear that chunk : immediately after helmet confirms clear
-[Telemetry Infrastructure] → [Hot Storage] : telemetry data from acknowledged chunk : on each confirmed chunk write
-
-
-# -----------------------------------------------------------------------
-# Case 2 — Corrupt Data
-# -----------------------------------------------------------------------
-
-# Infra validates payload before writing — rejects with bad payload error
-[Telemetry Infrastructure] → [Smartphone] : bad payload error, chunk sequence number, timestamp range : on validation failure
-
-# Smartphone requests helmet to resend that chunk
-[Smartphone] → [Helmet] : resend chunk request, chunk sequence number, timestamp range : immediately on bad payload error
-
-# Helmet resends chunk from buffer (buffer still intact)
-[Helmet] → [Smartphone] : buffered chunk data, chunk sequence number, helmet ID, timestamp : on resend request
-
-# Smartphone retries forward to Telemetry Infrastructure — attempt 2
-[Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : resent chunk data, chunk sequence number, helmet ID, timestamp range : immediately
-
-# Resend accepted branch
-[Telemetry Infrastructure] → [Smartphone] : chunk acknowledgement, chunk sequence number : on successful write
-[Smartphone] → [Helmet] : sync acknowledgement for that chunk : immediately
-[Helmet] → [Helmet] : clear that chunk from buffer storage : on receiving acknowledgement
-[Smartphone] → [Smartphone Local Storage] : clear that chunk : immediately after helmet confirms clear
-[Telemetry Infrastructure] → [Hot Storage] : telemetry data from acknowledged chunk : on each confirmed chunk write
-
-# Resend rejected branch — discard and log
-[Telemetry Infrastructure] → [Smartphone] : bad payload error, chunk sequence number, timestamp range : on second validation failure
-[Telemetry Infrastructure] → [Cold Storage] : corrupt chunk log entry, helmet ID, chunk timestamp range, rejection reason, resend attempted true, resend outcome failed, logged at : immediately
-[Smartphone] → [Helmet] : discard chunk command, chunk sequence number, timestamp range : immediately
-[Helmet] → [Helmet] : clear that chunk from buffer storage : on receiving discard command
-[Smartphone] → [Smartphone Local Storage] : clear that chunk : immediately after helmet confirms clear
-
-# Monitoring infra checks corrupt rejection count for this helmet
-[Monitoring Infrastructure] → [Cold Storage] : query corrupt rejection count for helmet ID : at regular intervals
-[Monitoring Infrastructure] → [Infrastructure Engineer] : corrupt data threshold exceeded alert, helmet ID, timestamp : if count exceeds threshold in Parameter Store
-
+# Processing Infrastructure validates — two cases
 
 # -----------------------------------------------------------------------
-# Case 3 — Ack Lost (resolved by idempotency + TTL)
+# Case A — Sync within 24 hours (hot storage data available)
 # -----------------------------------------------------------------------
 
-# Infra stored the chunk successfully but ack never reached smartphone
-[Smartphone] → [Smartphone] : ack timeout, no acknowledgement received : after 30 seconds
-[Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : resend same chunk, chunk sequence number, helmet ID, timestamp range : on timeout (attempt 2)
+[Processing Infrastructure] → [Hot Storage] : query recent telemetry for helmet ID : on crash flag detected
+[Hot Storage] → [Processing Infrastructure] : recent telemetry history : immediately
+[Processing Infrastructure] → [Processing Infrastructure] : validate crash event against telemetry history : immediately
 
-# Infra detects duplicate via timestamp range — discards, sends ack
-[Telemetry Infrastructure] → [Telemetry Infrastructure] : check timestamp range against existing Hot Storage entries : on every chunk receive
-[Telemetry Infrastructure] → [Telemetry Infrastructure] : discard duplicate chunk : timestamp range already exists in Hot Storage
-[Telemetry Infrastructure] → [Smartphone] : chunk acknowledgement, chunk sequence number : on duplicate detected
+# Validated as crash — proceed to retrospective alert
+# Validated as false positive branch
+[Processing Infrastructure] → [Cold Storage] : false positive log entry, helmet ID, crash timestamp, reason, synced at : on false positive decision
+# No alert sent
 
-# If ack lost again — attempt 3
-[Smartphone] → [Smartphone] : ack timeout, no acknowledgement received : after 30 seconds
-[Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : resend same chunk, chunk sequence number, helmet ID, timestamp range : on timeout (attempt 3)
-[Telemetry Infrastructure] → [Telemetry Infrastructure] : discard duplicate chunk : timestamp range already exists in Hot Storage
-[Telemetry Infrastructure] → [Smartphone] : chunk acknowledgement, chunk sequence number : on duplicate detected
+# -----------------------------------------------------------------------
+# Case B — Sync after 24 hours (no hot storage data available)
+# -----------------------------------------------------------------------
 
-# If all 3 attempts fail — smartphone connectivity issue suspected
-# Data is safe in infra — problem is ack not reaching smartphone
-[Smartphone] → [Smartphone] : ack timeout after 3 attempts : —
-[Smartphone App] → [Rider] : "Sync confirmation not received — possible connectivity issue on device" : immediately
-[Helmet HUD] → [Rider] : "Sync confirmation not received — alert system status uncertain" : immediately
+[Processing Infrastructure] → [Hot Storage] : query recent telemetry for helmet ID : on crash flag detected
+[Hot Storage] → [Processing Infrastructure] : no data found : immediately
+[Processing Infrastructure] → [Processing Infrastructure] : validate crash event against buffered data only, apply lower confidence threshold, lean toward alert : immediately
 
-# Smartphone holds chunk locally — does not clear helmet buffer
-[Smartphone] → [Smartphone Local Storage] : retain chunk, mark as unconfirmed, record chunk creation timestamp : immediately
+# -----------------------------------------------------------------------
+# Retrospective alert — runs after Case A validated or Case B confirmed
+# -----------------------------------------------------------------------
 
-# Monitoring infra detects repeated duplicate submissions as anomaly
-[Monitoring Infrastructure] → [Cold Storage] : query duplicate submission count for helmet ID : at regular intervals
-[Monitoring Infrastructure] → [Infrastructure Engineer] : repeated duplicate submissions detected, helmet ID, timestamp : if count exceeds threshold in Parameter Store
+[Processing Infrastructure] → [Alerting Infrastructure] : crash confirmed, helmet ID, crash timestamp, incident location from buffer, current location from phone : on crash confirmation
+[Alerting Infrastructure] → [Smartphone App] : persistent notification — "Crash detected at [timestamp] — Alert emergency services?" : immediately
+[Alerting Infrastructure] → [Helmet HUD] : persistent notification — "Crash detected at [timestamp] — Alert emergency services?" : immediately
+# No countdown — notification persists until rider explicitly acts
 
-# On next connectivity restore — smartphone retries automatically
-# Infra detects duplicate again via timestamp range — acks cleanly
-[Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : resend chunk, chunk sequence number, helmet ID, timestamp range : on connectivity restore
-[Telemetry Infrastructure] → [Telemetry Infrastructure] : discard duplicate chunk : timestamp range already exists in Hot Storage
-[Telemetry Infrastructure] → [Smartphone] : chunk acknowledgement, chunk sequence number : on duplicate detected
-[Smartphone] → [Helmet] : sync acknowledgement for that chunk : immediately
-[Helmet] → [Helmet] : clear that chunk from buffer storage : on receiving acknowledgement
-[Smartphone] → [Smartphone Local Storage] : clear that chunk : immediately after helmet confirms clear
+# Rider cancels branch
+[Rider] → [Smartphone App] : cancel : on rider action
+[Smartphone App] → [Alerting Infrastructure] : cancel signal, helmet ID, timestamp : immediately
+[Alerting Infrastructure] → [Helmet HUD] : dismiss notification : immediately
+[Alerting Infrastructure] → [Cold Storage] : incident log entry, helmet ID, crash timestamp, incident location, cancelled at, cancelled by rider : immediately
+# No alert sent to Next of Kin or Emergency Services
 
-# TTL expiry — chunk held unconfirmed beyond 24 hours (TTL value in Parameter Store)
-[Smartphone] → [Smartphone] : check unconfirmed chunk age against TTL : at regular intervals
-[Smartphone] → [Smartphone] : TTL expired for chunk : when chunk creation timestamp exceeds 24 hours
+# Rider confirms or does not respond branch
+[Alerting Infrastructure] → [Next of Kin] : crash alert, incident location, current location, incident timestamp : immediately on confirm or no response
+[Alerting Infrastructure] → [Emergency Services] : crash alert, incident location, current location, incident timestamp, speed at time of crash, next of kin contact : immediately, independent of Next of Kin channel
+# Retries on each channel do not block the other
 
-# Forced discard
-[Smartphone] → [Helmet] : discard chunk command, chunk sequence number, timestamp range : immediately on TTL expiry
-[Helmet] → [Helmet] : clear that chunk from buffer storage : on receiving discard command
-[Smartphone] → [Smartphone Local Storage] : clear that chunk : immediately after helmet confirms clear
+# Delivery success branch
+[Next of Kin] → [Alerting Infrastructure] : acknowledgement : on receiving alert
+[Emergency Services] → [Alerting Infrastructure] : acknowledgement : on receiving alert
+[Alerting Infrastructure] → [Cold Storage] : delivery success log, helmet ID, channel, timestamp : on each acknowledgement
 
-# Log and alert
-[Telemetry Infrastructure] → [Cold Storage] : TTL expiry log entry, helmet ID, chunk timestamp range, chunk creation timestamp, discarded at, reason — ack never confirmed : immediately
-[Monitoring Infrastructure] → [Infrastructure Engineer] : TTL expiry alert, helmet ID, chunk timestamp range, timestamp : immediately on log entry written
+# Delivery failure branch
+[Alerting Infrastructure] → [Alerting Infrastructure] : retry alert, channel : on no acknowledgement received
+[Alerting Infrastructure] → [Cold Storage] : delivery failure log, helmet ID, channel, attempt number, timestamp : on each failed attempt
+
+# Storage — written regardless of outcome
+[Alerting Infrastructure] → [Cold Storage] : incident record, helmet ID, crash timestamp, incident location, current location at alert time, confirmation or cancellation, delivery outcome per channel : immediately on resolution

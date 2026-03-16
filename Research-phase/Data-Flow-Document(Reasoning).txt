@@ -184,3 +184,34 @@ in the cloud for later use or for retrying to contact again
 Either way — cancelled or not — what gets written to storage?
 In the storage the alert raised, the time the loactation basically the telemetry of last one minute gets added to permanent storage
 
+
+
+
+
+Flow 4 — Phone Dead During Crash
+Rider is mid-ride. Crash happens. At the moment of crash — the phone is dead. Not low battery, not no internet — completely off.
+what  should happen from the helmet's perspective, then what happens when the phone eventually comes back on.
+Since the Helmet dosent have the phone to forward the data to the cloud it will store the data in its buffer, this is why i wanted the helmet to have comms ability to connect with the cloud 
+and trigger the alert on its own if the phone is not available  but that is something we can probably implement in later versions
+
+The helmet has no path to cloud without the phone
+Since the helmet has no path to the cloud it cannot send the alert to the next of kin or emergency services, but it will store the data in the buffer, so that the next time it syncs with the phone it
+can store the data to the cloud and retrospectively trigger an alert
+
+The helmet buffer has the crash event sitting in it
+When the helmet connects with the smartphone it sends the data to the cloud and the alert is triggered
+
+The 30 second alert window — what happens to it when there's no phone?
+There would be no 30 sec alert window, since cloud is not available, but it will inform the rider that alert is not available
+
+When the phone revives — how does the helmet know, and what triggers the sync?
+The data in the buffer irrespective of what will always sync the data with the cloud and the cloud sees the crash flag compares the events data with the previous data that was received
+and retrospectively triggers the alert, the very presence of data in the buffer storage will trigger the sync crash or no crash is irrelevant
+
+When the cloud finally gets the crash data — what does it do with a crash event that's now maybe 30 minutes old?
+there can the two cases here the sync happens with in 24hrs thats the time the when the previous data related to the rider is still available in hotstorage and in our design we dont store
+all the telemetry data in the cold storage if it has no datapoint tagged as crash by the edge computing in the helmet, so in this case we can comapre the events with the data that were available 
+just before the connection was lost and decide if the crash is real or not, alert is triggered based on that 
+
+in the second case we have no previous data that is available here in this case the decion has to be made purely on the current data that is recieved from the sync if it determnined to be crash 
+the alert can be triggered, since the smarphone is now available since the sync is done the rider now has the capacity to cancel the alert if he wants to 
