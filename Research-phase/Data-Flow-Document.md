@@ -624,3 +624,88 @@
 [Telemetry Infrastructure] → [Processing Infrastructure] : buffered telemetry, shutdown message, helmet ID, timestamp range : immediately
 # Processing Infrastructure applies same resolution logic as Flow 6 sad path scenarios
 
+
+# Unexpected Dropout / LWT
+# Rider is mid-ride
+# Smartphone disconnects from AWS IoT Core unexpectedly — no warning sent
+# LWT registered at session startup — IoT Core fires it automatically on unexpected disconnect
+
+# LWT fires
+[AWS IoT Core] → [Processing Infrastructure] : LWT message, helmet ID, last known timestamp : on unexpected disconnection detected
+
+# Grace period — wait 5 seconds in case it is a brief network blip
+[Processing Infrastructure] → [Processing Infrastructure] : start 5 second grace period timer, helmet ID : immediately on LWT received
+
+# Device reconnects within grace period
+[Smartphone] → [AWS IoT Core] : reconnection, helmet ID, timestamp : within 5 seconds
+[Processing Infrastructure] → [Processing Infrastructure] : discard LWT, device reconnected within grace period, helmet ID : on reconnection detected
+# Normal telemetry resumes — no alert triggered, no log entry
+# Catch-up sync runs if backlog exists — same as startup sad path Sub-scenario A
+
+# Device does not reconnect within grace period
+[Processing Infrastructure] → [Processing Infrastructure] : grace period expired, no reconnection, treat as genuine unexpected dropout, helmet ID : on timer expiry
+
+# Processing Infrastructure checks last telemetry for crash flag
+[Processing Infrastructure] → [Hot Storage] : query last telemetry for helmet ID : immediately
+[Hot Storage] → [Processing Infrastructure] : last telemetry payload : immediately
+[Processing Infrastructure] → [Processing Infrastructure] : analyse last telemetry for crash flag, helmet ID : immediately
+
+# -----------------------------------------------------------------------
+# Case 1 — No crash flag in last telemetry
+# -----------------------------------------------------------------------
+
+[Processing Infrastructure] → [Processing Infrastructure] : no crash flag detected, mark helmet as unexpectedly offline, helmet ID, timestamp : immediately
+[Processing Infrastructure] → [Cold Storage] : unexpected dropout log entry, helmet ID, last known timestamp, no crash flag, LWT fired : immediately
+# No alert triggered
+# Hot storage retention window starts from last telemetry batch timestamp
+[Processing Infrastructure] → [Hot Storage] : start 24 hour retention window, helmet ID, last telemetry batch timestamp : immediately
+
+
+# -----------------------------------------------------------------------
+# Case 2 — Crash flag present in last telemetry
+# -----------------------------------------------------------------------
+
+[Processing Infrastructure] → [Processing Infrastructure] : crash flag detected, run validation : immediately
+[Processing Infrastructure] → [Hot Storage] : query recent telemetry history for helmet ID : immediately
+[Hot Storage] → [Processing Infrastructure] : recent telemetry history : immediately
+[Processing Infrastructure] → [Processing Infrastructure] : validate crash event against telemetry history : immediately
+
+# Validated as false positive
+[Processing Infrastructure] → [Processing Infrastructure] : false positive confirmed, no alert to fire : on validation result
+[Processing Infrastructure] → [Cold Storage] : false positive log entry, helmet ID, crash timestamp, reason, LWT context : immediately
+# No alert triggered
+
+# Validated as genuine crash — full alert mechanics run
+[Processing Infrastructure] → [Processing Infrastructure] : crash confirmed, proceed to alert : on validation result
+[Processing Infrastructure] → [Alerting Infrastructure] : crash confirmed, helmet ID, crash timestamp, incident location : immediately
+[Alerting Infrastructure] → [Smartphone App] : 30 second countdown — "Crash detected — cancel to abort alert" : immediately
+[Alerting Infrastructure] → [Helmet HUD] : 30 second countdown — "Crash detected — cancel to abort alert" : immediately
+# Helmet is gone — HUD notification may not be deliverable
+# Smartphone carries countdown — 30 seconds acts as cancellation window
+# if smartphone or helmet comes back online within countdown — rider can cancel manually
+
+# Rider cancels from smartphone within countdown
+[Rider] → [Smartphone App] : cancel : within 30 second window
+[Smartphone App] → [Alerting Infrastructure] : cancel signal, helmet ID, timestamp : immediately
+[Alerting Infrastructure] → [Cold Storage] : cancelled alert record, helmet ID, crash timestamp, cancelled by rider, LWT context : immediately
+# No alert sent to Next of Kin or Emergency Services
+
+# Rider does not cancel — alert fires on countdown expiry
+[Alerting Infrastructure] → [Next of Kin] : crash alert, incident location, current location, incident timestamp : on countdown expiry
+[Alerting Infrastructure] → [Emergency Services] : crash alert, incident location, current location, incident timestamp, next of kin contact : on countdown expiry, independent of Next of Kin channel
+[Alerting Infrastructure] → [Cold Storage] : incident record, helmet ID, crash timestamp, incident location, delivery outcome per channel : on resolution
+
+# -----------------------------------------------------------------------
+# Smartphone unreachable during countdown
+# -----------------------------------------------------------------------
+
+# Cloud runs countdown anyway — no cancel signal received
+[Alerting Infrastructure] → [Alerting Infrastructure] : countdown expired, no cancel signal received, smartphone unreachable : on countdown expiry
+[Alerting Infrastructure] → [Next of Kin] : crash alert, incident location, current location, incident timestamp : immediately
+[Alerting Infrastructure] → [Emergency Services] : crash alert, incident location, current location, incident timestamp, next of kin contact : immediately, independent of Next of Kin channel
+[Alerting Infrastructure] → [Cold Storage] : incident record, helmet ID, crash timestamp, incident location, smartphone unreachable at time of alert, delivery outcome per channel : on resolution
+
+# Smartphone comes back online after alert already fired
+# Follows same retroactive resolution logic as Flow 6 Scenario 2B
+[Smartphone App] → [Rider] : "Next of Kin and Emergency Services have been alerted — do you want to notify them the rider is safe?" : on smartphone reconnection
+# Rider confirms or declines — same flow as Flow 6 Scenario 2B

@@ -258,3 +258,21 @@ Any event that is flagged by the edge computer in the helmet as crash will be pr
 alert mechanics are not affected by the batterry percentage levels of the helmet or the smartphone
 Low smarphone battery dosent affect anything in any case of gadget having low battery the cloud is informed at 10% and 1% of battery, 10% for low battery and the 1% for shutdown message 
 as the last message so that the cloud is informed noting changes with respect to the alert mechanics
+
+
+Flow 8 — Unexpected Dropout / LWT — Questions
+
+LWT fires automatically when the broker detects unexpected disconnection.From the cloud's perspective — does it start the Type 3 validation immediately when LWT fires, 
+or does it wait a short grace period in case it's a brief connectivity blip and the device reconnects?
+
+i think we can here have a grace period of 5 seconds incase its just a network blip
+
+When cloud checks last telemetry after LWT fires — same two cases as before, crash flag present or not. 
+If no crash flag — does cloud simply mark helmet as unexpectedly offline and log it, or does it still run some level of validation on the last telemetry before deciding?
+The last telemetry is processed by the processing infra for making a decision if the event was a crash or not and trigger the alert accordingly based on LWT
+
+If crash flag is present — full 30 second countdown runs on smartphone only since helmet is gone. But what if the smartphone is also unreachable at this point
+ — does cloud attempt the countdown anyway and just let it expire, or does it skip straight to firing the alert?
+The LWT message itself — does it carry any payload like last known helmet ID and timestamp, or is it just a bare disconnect signal?
+There will be a full 30 sec countdown as it will act as a time in case the helmet or smartphone comes back online the alert has the chance of being cancelled by the rider manually 
+The LWT message will have the last known helmet ID and timestamp
