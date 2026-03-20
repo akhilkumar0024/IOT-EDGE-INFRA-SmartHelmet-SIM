@@ -388,3 +388,128 @@
 
 # Storage — written regardless of outcome
 [Alerting Infrastructure] → [Cold Storage] : incident record, helmet ID, crash timestamp, incident location, current location at alert time, confirmation or cancellation, delivery outcome per channel : immediately on resolution
+
+# Graceful Shutdown — Happy Path
+# Rider switches helmet off
+# Smartphone has internet, Telemetry Infrastructure is reachable
+
+[Rider] → [Helmet] : power off signal : when rider switches helmet off
+
+# Helmet flushes remaining unsent telemetry to smartphone before shutdown
+[Helmet] → [Smartphone] : remaining unsent telemetry payloads, helmet ID, timestamp : immediately on power off signal
+[Smartphone] → [Telemetry Infrastructure — Live Channel] : remaining telemetry payloads, helmet ID, timestamp : immediately
+[Telemetry Infrastructure] → [Hot Storage] : remaining telemetry payloads : on receive
+[Telemetry Infrastructure] → [Smartphone] : telemetry acknowledgement : on successful write
+
+# Helmet sends graceful shutdown message
+[Helmet] → [Smartphone] : graceful shutdown message, helmet ID, timestamp : after remaining telemetry flushed
+[Smartphone] → [Telemetry Infrastructure] : graceful shutdown message, helmet ID, timestamp : immediately
+[Telemetry Infrastructure] → [Processing Infrastructure] : graceful shutdown message, helmet ID, timestamp : immediately
+[Processing Infrastructure] → [Processing Infrastructure] : mark helmet as gracefully offline : immediately
+[Processing Infrastructure] → [Telemetry Infrastructure] : shutdown acknowledgement, helmet ID, timestamp : immediately
+[Telemetry Infrastructure] → [Smartphone] : shutdown acknowledgement, helmet ID, timestamp : immediately
+[Smartphone] → [Helmet] : shutdown acknowledgement : immediately
+[Helmet] → [Helmet] : power down : on receiving shutdown acknowledgement
+
+# Smartphone notifies rider
+[Smartphone App] → [Rider] : "Riding session ended — helmet is now offline" : on shutdown acknowledgement received
+
+# Hot storage retention window starts from last telemetry batch timestamp
+[Processing Infrastructure] → [Hot Storage] : start 24 hour retention window, helmet ID, last telemetry batch timestamp : immediately on graceful shutdown marked
+# No cold storage write — graceful shutdown is a normal event, nothing to record
+
+# Nothing written to cold storage
+# No alert triggered
+
+
+# Graceful Shutdown — Sad Path
+# Rider switches helmet off
+# Shutdown acknowledgement not received within 10 seconds
+# Helmet powers down regardless — buffer retained
+
+[Rider] → [Helmet] : power off signal : when rider switches helmet off
+[Helmet] → [Smartphone] : remaining unsent telemetry payloads, helmet ID, timestamp : immediately on power off signal
+[Helmet] → [Smartphone] : graceful shutdown message, helmet ID, timestamp : after remaining telemetry flushed
+[Helmet] → [Helmet] : start 10 second acknowledgement timer : immediately after shutdown message sent
+[Helmet] → [Helmet] : no acknowledgement received within 10 seconds : on timer expiry
+[Helmet] → [Helmet] : power down, retain buffer storage : on timer expiry
+# Helmet powers down without cloud acknowledgement
+# Buffer retained — data not lost
+
+# From cloud perspective — no shutdown message received yet
+# LWT fires automatically — cloud treats as Type 3 unexpected dropout
+# Type 3 flow runs independently — not modified here
+
+# Smartphone retains buffered telemetry and graceful shutdown message in local storage
+[Smartphone] → [Smartphone Local Storage] : buffered telemetry payloads, graceful shutdown message, helmet ID, timestamp : immediately on helmet power down
+
+# On connectivity restore — smartphone syncs buffer including graceful shutdown message
+[Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : buffered telemetry payloads, graceful shutdown message, helmet ID, timestamp range : on connectivity restore
+[Telemetry Infrastructure] → [Processing Infrastructure] : buffered telemetry payloads, graceful shutdown message, helmet ID, timestamp range : immediately
+[Telemetry Infrastructure] → [Smartphone] : acknowledgement : on successful receive
+
+# Processing Infrastructure checks where Type 3 process currently stands
+[Processing Infrastructure] → [Processing Infrastructure] : check Type 3 process status for helmet ID : on receiving graceful shutdown message
+
+# -----------------------------------------------------------------------
+# Scenario 1 — Type 3 process identified false positive, no alert fired
+# -----------------------------------------------------------------------
+
+[Processing Infrastructure] → [Processing Infrastructure] : graceful shutdown confirmed, false positive validated, no alert was fired : on status check
+[Telemetry Infrastructure] → [Hot Storage] : buffered telemetry payloads : on receive
+# Hot storage retention window — 24 hours from last telemetry batch timestamp
+# False alert event log already written to cold storage during Type 3 process — nothing new added
+# No additional cold storage write on graceful shutdown confirmation
+[Smartphone App] → [Rider] : "Riding session ended — helmet is now offline" : on graceful shutdown confirmed
+
+
+# -----------------------------------------------------------------------
+# Scenario 2A — Alert countdown still active when buffered data arrives
+# -----------------------------------------------------------------------
+
+[Processing Infrastructure] → [Processing Infrastructure] : graceful shutdown message received, alert countdown still active : on status check
+[Processing Infrastructure] → [Alerting Infrastructure] : cancel alert countdown, helmet ID, timestamp, reason — graceful shutdown confirmed : immediately
+[Alerting Infrastructure] → [Alerting Infrastructure] : cancel alert countdown : immediately
+[Alerting Infrastructure] → [Smartphone App] : "Alert cancelled — graceful shutdown confirmed" : immediately
+# Helmet is powered down — no HUD notification possible
+[Smartphone App] → [Rider] : "Alert was triggered but has been cancelled — your session ended safely" : immediately
+
+# Rider given option to send alert manually since helmet is offline
+[Smartphone App] → [Rider] : "Do you want to alert emergency services anyway?" : immediately
+# Rider confirms branch
+[Rider] → [Smartphone App] : confirm : on rider action
+[Smartphone App] → [Alerting Infrastructure] : manual alert request, helmet ID, timestamp, initiated by rider via smartphone : immediately
+[Alerting Infrastructure] → [Next of Kin] : crash alert, incident location, current location, incident timestamp : immediately
+[Alerting Infrastructure] → [Emergency Services] : crash alert, incident location, current location, incident timestamp, next of kin contact : immediately, independent of Next of Kin channel
+[Alerting Infrastructure] → [Cold Storage] : manual alert record, helmet ID, timestamp, initiated by rider, channel delivery outcomes : on resolution
+
+# Rider cancels branch
+[Rider] → [Smartphone App] : cancel : on rider action
+[Alerting Infrastructure] → [Cold Storage] : alert cancelled record, helmet ID, timestamp, cancelled by rider after graceful shutdown confirmed : immediately
+
+# Telemetry written to hot storage regardless of rider choice
+[Telemetry Infrastructure] → [Hot Storage] : buffered telemetry payloads : on receive
+
+
+# -----------------------------------------------------------------------
+# Scenario 2B — Alert already fired before buffered data arrives
+# -----------------------------------------------------------------------
+
+[Processing Infrastructure] → [Processing Infrastructure] : graceful shutdown message received, alert already fired : on status check
+[Alerting Infrastructure] → [Smartphone App] : "Alert has already been sent to Next of Kin and Emergency Services" : immediately
+[Smartphone App] → [Rider] : "Next of Kin and Emergency Services have been alerted — do you want to notify them the rider is safe?" : immediately
+
+# Rider confirms — notify that rider is safe
+[Rider] → [Smartphone App] : confirm : on rider action
+[Smartphone App] → [Alerting Infrastructure] : rider safe notification request, helmet ID, timestamp, initiated by rider : immediately
+[Alerting Infrastructure] → [Next of Kin] : rider safe notification — previous alert was a false positive : immediately
+[Alerting Infrastructure] → [Emergency Services] : rider safe notification — previous alert was a false positive : immediately, independent of Next of Kin channel
+[Alerting Infrastructure] → [Cold Storage] : rider safe notification record, helmet ID, timestamp, rider choice confirmed, channel delivery outcomes : immediately
+
+# Rider declines — does not notify
+[Rider] → [Smartphone App] : cancel : on rider action
+[Alerting Infrastructure] → [Cold Storage] : rider safe notification declined, helmet ID, timestamp, rider choice declined : immediately
+
+# Telemetry written to hot storage regardless of rider choice
+[Telemetry Infrastructure] → [Hot Storage] : buffered telemetry payloads : on receive
+

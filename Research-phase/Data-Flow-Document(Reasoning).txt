@@ -215,3 +215,25 @@ just before the connection was lost and decide if the crash is real or not, aler
 
 in the second case we have no previous data that is available here in this case the decion has to be made purely on the current data that is recieved from the sync if it determnined to be crash 
 the alert can be triggered, since the smarphone is now available since the sync is done the rider now has the capacity to cancel the alert if he wants to 
+
+Flow 6 — Graceful Shutdown — Questions
+
+Does the helmet flush its local buffer to smartphone before sending the shutdown message, or does it send the shutdown message first and then flush, or does buffer flush and shutdown message go together?
+When the shutdown button is pressed the the helmet will send the remaining data to the smarphone that hasnt been sent and it will wait for the confiramtion or acknowledgement from the 
+cloud before shutting down, ofcourse the cloud will also be informed theat the helmet is shut down gracefully 
+
+Does the helmet wait for a cloud acknowledgement before powering down, or does it fire the shutdown message and power off immediately regardless?
+It will wait for 10 seconds for the acknowledgement from the cloud, if it dosent recieve the acknowledgement with in 10 seconds it will shut down anyway, but since we are ratining the 
+data in the buffer until the acknowledgement comes there is no loss of data 
+
+If the shutdown message never reaches cloud — phone has no internet at that exact moment — does that fall into Type 3 unexpected dropout, or do we treat it separately?
+Yes it will be a type 3 unexpected dropout, but since the data is retained in the buffer it will be sent to the cloud when the connection is restored, all the shutdown process is completed
+within the 10 seconds time frame ofcourse when the connection is restored the cloud will be informed that the helmet is shut down gracefully since the smartphone is the one that is 
+sending data to the cloud 
+
+After the smartphone relays the shutdown message to cloud, does the smartphone app notify the rider of anything — "helmet offline", "session ended", something like that — or nothing?
+Yes the smartphone will now notify the rider that the riding session ended and the helmet is now offline
+
+Hot storage 24 hour retention window — does it start from the moment the shutdown message is received by cloud, or from the timestamp of the last telemetry batch?
+The 24 hr retention window starts from the timestamp of the last telemetry batch received by the cloud
+
