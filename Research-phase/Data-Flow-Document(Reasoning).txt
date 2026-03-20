@@ -237,3 +237,24 @@ Yes the smartphone will now notify the rider that the riding session ended and t
 Hot storage 24 hour retention window — does it start from the moment the shutdown message is received by cloud, or from the timestamp of the last telemetry batch?
 The 24 hr retention window starts from the timestamp of the last telemetry batch received by the cloud
 
+Flow 7 — Battery Death — Questions
+
+At what point does the helmet send the low battery warning — is there a specific battery percentage threshold, or is it time-based (e.g. estimated X minutes remaining)?
+And is this threshold stored in Parameter Store or hardcoded on the helmet?
+After the low battery warning is sent, the helmet continues operating until it dies. During that remaining time — does it keep sending telemetry to the smartphone as normal, or does it reduce frequency to conserve battery?
+We use battery percentage as the threshold and we store it in Parameter Store, the threshold is set to 10%, for now there is no battery saving mode the oprerations continue as normal 
+and we keep sending the data as normal no reduction in frequecy
+
+When the helmet finally dies — does it attempt any final message before powering down,
+or does it just drop with no warning (meaning from cloud perspective it looks like a Type 3 dropout after a low battery warning)?
+At 1% the helmet will send the last telemetry data to the cloud and will shut down its operations, no alert will fire if the cloud is informed of  the reason for Helmet becoming
+unavailable
+
+Cloud checks last telemetry after receiving the low battery warning — if abnormal acceleration is present,
+does the 30 second countdown start immediately on receiving the low battery warning, or does it wait until the helmet actually goes offline?
+If the smartphone also has low battery at the same time — does that affect anything, or do we treat that as a separate scenario?
+
+Any event that is flagged by the edge computer in the helmet as crash will be processed by the processing infra to verify if its a crash or not and will trigger or not trigger the alert accordingly
+alert mechanics are not affected by the batterry percentage levels of the helmet or the smartphone
+Low smarphone battery dosent affect anything in any case of gadget having low battery the cloud is informed at 10% and 1% of battery, 10% for low battery and the 1% for shutdown message 
+as the last message so that the cloud is informed noting changes with respect to the alert mechanics

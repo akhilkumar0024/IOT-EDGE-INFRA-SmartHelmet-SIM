@@ -513,3 +513,114 @@
 # Telemetry written to hot storage regardless of rider choice
 [Telemetry Infrastructure] → [Hot Storage] : buffered telemetry payloads : on receive
 
+# Battery Death — Normal Path
+# Rider is mid-ride
+# Helmet battery drops to 10% threshold
+
+# 10% Low Battery Warning
+[Helmet] → [Helmet] : battery level check against threshold : continuously
+[Helmet] → [Helmet] : battery at 10% threshold detected : on threshold breach
+[Helmet] → [Smartphone] : low battery warning, battery percentage, helmet ID, timestamp : immediately
+[Smartphone] → [Telemetry Infrastructure] : low battery warning, battery percentage, helmet ID, timestamp : immediately
+[Telemetry Infrastructure] → [Processing Infrastructure] : low battery warning, helmet ID, timestamp : immediately
+[Processing Infrastructure] → [Processing Infrastructure] : mark helmet as low battery, helmet ID, timestamp : immediately
+[Helmet HUD] → [Rider] : "Low battery System Shutdown at 5%" : immediately
+[Smartphone App] → [Rider] : "Helmet battery low, System Shut down at 5%" : immediately
+
+# Normal operations continue — no change to telemetry frequency or alert mechanics
+[Helmet Sensors] → [Helmet] : accelerometer, speed, edge result, helmet ID, timestamp : every 1 second
+[Helmet] → [Smartphone] : telemetry payload, helmet ID, timestamp : every 1 second
+[Smartphone] → [Telemetry Infrastructure — Live Channel] : JSON array of 10 telemetry payloads + GPS + user ID + batch timestamp : every 10 seconds
+[Telemetry Infrastructure] → [Hot Storage] : batch payload, batch timestamp : on every receive
+
+# Battery thresholds read from Parameter Store at session startup
+# Helmet reads thresholds via smartphone relay — stored locally for session duration
+# 10% threshold for low battery warning, 5% threshold for shutdown message
+
+# 5% Shutdown Message
+[Helmet] → [Helmet] : battery at 5% threshold detected : on threshold breach
+[Helmet] → [Smartphone] : shutdown message, last telemetry payload, battery percentage, helmet ID, timestamp : immediately
+[Smartphone] → [Telemetry Infrastructure] : shutdown message, last telemetry payload, battery percentage, helmet ID, timestamp : immediately
+[Telemetry Infrastructure] → [Processing Infrastructure] : shutdown message, last telemetry payload, helmet ID, timestamp : immediately
+[Helmet] → [Helmet] : start 15 second acknowledgement timer : immediately after shutdown message sent
+
+# Processing Infrastructure checks last telemetry for crash flag
+[Processing Infrastructure] → [Processing Infrastructure] : check last telemetry for crash flag, helmet ID : immediately on shutdown message received
+
+# -----------------------------------------------------------------------
+# Case 1 — No crash flag in last telemetry
+# -----------------------------------------------------------------------
+
+[Processing Infrastructure] → [Processing Infrastructure] : no crash flag detected, mark helmet as battery death offline, helmet ID, timestamp : immediately
+[Processing Infrastructure] → [Telemetry Infrastructure] : shutdown acknowledgement, helmet ID, timestamp : immediately
+[Telemetry Infrastructure] → [Smartphone] : shutdown acknowledgement, helmet ID, timestamp : immediately
+[Smartphone] → [Helmet] : shutdown acknowledgement : immediately
+[Helmet] → [Helmet] : power down on receiving acknowledgement : immediately
+[Smartphone App] → [Rider] : "Riding session ended — helmet battery depleted" : on shutdown acknowledgement
+# No alert triggered
+# Hot storage retention window starts from last telemetry batch timestamp
+[Processing Infrastructure] → [Hot Storage] : start 24 hour retention window, helmet ID, last telemetry batch timestamp : immediately
+# No cold storage write — battery death with no incident is a normal event
+
+
+# -----------------------------------------------------------------------
+# Case 2 — Crash flag present in last telemetry
+# -----------------------------------------------------------------------
+
+[Processing Infrastructure] → [Processing Infrastructure] : crash flag detected in last telemetry, run validation : immediately
+[Processing Infrastructure] → [Hot Storage] : query recent telemetry history for helmet ID : immediately
+[Hot Storage] → [Processing Infrastructure] : recent telemetry history : immediately
+
+# Validated as false positive
+[Processing Infrastructure] → [Processing Infrastructure] : false positive confirmed, no alert to fire : on validation result
+[Processing Infrastructure] → [Telemetry Infrastructure] : shutdown acknowledgement, helmet ID, timestamp : immediately
+[Telemetry Infrastructure] → [Smartphone] : shutdown acknowledgement : immediately
+[Smartphone] → [Helmet] : shutdown acknowledgement : immediately
+[Helmet] → [Helmet] : power down on receiving acknowledgement : immediately
+[Processing Infrastructure] → [Cold Storage] : false positive log entry, helmet ID, crash timestamp, reason, battery death context : immediately
+[Smartphone App] → [Rider] : "Riding session ended — helmet battery depleted" : on shutdown acknowledgement
+
+# Validated as genuine crash — full alert mechanics run
+[Processing Infrastructure] → [Processing Infrastructure] : crash confirmed, proceed to alert : on validation result
+[Processing Infrastructure] → [Alerting Infrastructure] : crash confirmed, helmet ID, crash timestamp, incident location : immediately
+[Alerting Infrastructure] → [Smartphone App] : 30 second countdown — "Crash detected — cancel to abort alert" : immediately
+[Alerting Infrastructure] → [Helmet HUD] : 30 second countdown — "Crash detected — cancel to abort alert" : immediately
+# Helmet may power down during countdown — smartphone carries countdown alone if helmet dies
+# Cloud owns the countdown regardless of helmet status
+
+# Rider cancels from smartphone
+[Rider] → [Smartphone App] : cancel : within 30 second window
+[Smartphone App] → [Alerting Infrastructure] : cancel signal, helmet ID, timestamp : immediately
+[Alerting Infrastructure] → [Helmet HUD] : dismiss notification if still active : immediately
+[Alerting Infrastructure] → [Cold Storage] : cancelled alert record, helmet ID, crash timestamp, cancelled by rider, battery death context : immediately
+# No alert sent to Next of Kin or Emergency Services
+
+# Rider does not cancel — alert fires
+[Alerting Infrastructure] → [Next of Kin] : crash alert, incident location, current location, incident timestamp : on countdown expiry
+[Alerting Infrastructure] → [Emergency Services] : crash alert, incident location, current location, incident timestamp, next of kin contact : on countdown expiry, independent of Next of Kin channel
+[Alerting Infrastructure] → [Cold Storage] : incident record, helmet ID, crash timestamp, incident location, delivery outcome per channel : on resolution
+
+# Shutdown acknowledgement sent after alert mechanics initiated — not blocked by alert outcome
+[Processing Infrastructure] → [Telemetry Infrastructure] : shutdown acknowledgement, helmet ID, timestamp : immediately after alert mechanics initiated
+[Telemetry Infrastructure] → [Smartphone] : shutdown acknowledgement : immediately
+[Smartphone] → [Helmet] : shutdown acknowledgement : immediately
+[Helmet] → [Helmet] : power down on receiving acknowledgement or on 15 second timer expiry : whichever comes first
+
+
+# -----------------------------------------------------------------------
+# Sad Path — 15 second timer expires, no acknowledgement received
+# -----------------------------------------------------------------------
+
+[Helmet] → [Helmet] : 15 second timer expired, no acknowledgement received : on timer expiry
+[Helmet] → [Helmet] : power down, retain buffer storage : immediately
+# Helmet powers down without cloud acknowledgement
+# Buffer retained — data not lost
+# From cloud perspective — if shutdown message was received, processing continues as normal
+# If shutdown message was not received — LWT fires, cloud treats as Type 3 unexpected dropout
+# When connectivity restores — smartphone syncs buffer including shutdown message
+# Cloud receives shutdown message retroactively — same resolution logic as Flow 6 sad path
+[Smartphone] → [Smartphone Local Storage] : retain buffered telemetry, shutdown message, helmet ID, timestamp : immediately on helmet power down
+[Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : buffered telemetry, shutdown message, helmet ID, timestamp range : on connectivity restore
+[Telemetry Infrastructure] → [Processing Infrastructure] : buffered telemetry, shutdown message, helmet ID, timestamp range : immediately
+# Processing Infrastructure applies same resolution logic as Flow 6 sad path scenarios
+
