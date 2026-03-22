@@ -311,3 +311,24 @@ termed as some issue with infra failure wether at sensor level among millions of
 Deads Mans hand 
 This is the service that will be monitoring the monitoring infrastructure to inform the engineer if the monitoring infrastructure itself goes down 
 
+9B — Sensor Failure (device layer)
+Sensor failiures are caught proactively by health checks within the helmet and attaching a maintainance flag if the failing health
+is discovered during the health check the data is sent to the cloud through the smartphone
+
+The scenario now needs to be answered is what if its a fleet wide sensor failure, one helmet or an  isolated indivisual can be rectified alerting 
+the user on the need of maintainance the mass alert detection mechanism is defined in flow 9A
+Two Options are available for the case of users that are in the middle of the ride
+
+Option A : All alerts are put on hold unitl the fleet manager resolves the issue 
+Option B : If the Issue isnt fixed during a time period the alerts are no longer blocked and the alert is triggered 
+
+We go with Option A : the alert is put on hold unitl the fleet manager resolves the issue because the mass hysteria or mass alerts(false positive alerts)
+can gobble up the resources of the emergency services, the alert infra the processing infra, the DB etc we have to take into consideration that 
+an accident or a crash can also be reported by other bystanders in  such a case mass firing of unverified alerts can cause a lot of  resource issues 
+
+The few scenarios now arise if what is the alerts where geniuine and the alerts were fasle what if the maintainance is completed under 24hrs and above 24hrs
+For the scenario where the bugs are fixed within 24hrs we can use the normal flow where the processing infra will recheck each event confirm it with the telemetry 
+that is available in the hotstorage and fire the alerts normally as is  in the flow 3
+
+for the scenarios where the bugs are fixed above 24hrs we have to fall back to the flow 4 of retrospectively firing alets where the Rider decies if to fire an alert or not
+by default the crash event is only stored in the cloud storage

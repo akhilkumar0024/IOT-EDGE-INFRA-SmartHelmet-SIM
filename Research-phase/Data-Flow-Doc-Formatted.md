@@ -1334,3 +1334,137 @@
 | Mass alert — firmware version correlated | PagerDuty | Fleet Manager |
 | Mass alert — no firmware correlation, infra suspected | PagerDuty | Infrastructure Engineer |
 | Mass alert — geographically clustered, real incident | PagerDuty | Infrastructure Engineer (load monitoring) |
+
+---
+
+## Flow 9B — Sensor Failure (Device Layer)
+ 
+> **Precondition:** Helmet is active mid-ride. One or more helmet sensors begin producing garbage telemetry — values that are out of range, corrupted, or generating false crash flags at the edge processing layer.
+>
+> **Single helmet sensor failure** — Processing Infrastructure's false positive validation logic catches garbage telemetry from an individual helmet and generates a maintenance flag. This is covered in Flow 1 Branch B and Flow 3 Branch A. No new infrastructure behaviour is introduced for a single helmet.
+>
+> **Fleet-wide sensor failure** — A firmware bug causes many helmets simultaneously to produce false crash flags. This crosses the mass alert threshold in Flow 9A and enters the decision tree defined there. Flow 9B documents the full resolution path from that point onward.
+>
+> **Reference:** Single helmet sensor failure → see Flow 1 Branch B (maintenance flag) and Flow 3 Branch A (false positive handling). Fleet-wide sensor failure enters via Flow 9A Branch B1 (firmware version correlated mass alert).
+ 
+---
+ 
+### Rider Notification During Hold Period
+ 
+> Triggered when Processing Infrastructure holds alerts and Fleet Manager is paged. Riders mid-ride are notified immediately on both devices.
+ 
+```
+[Processing Infrastructure] → [Alerting Infrastructure]   : hold all dispersed alerts, fleet-wide issue detected, firmware version, timestamp          : immediately on hold initiated
+[Alerting Infrastructure] → [Helmet HUD]                  : "Fleet-wide issue detected — alert systems under maintenance"                               : immediately to all affected helmets
+[Alerting Infrastructure] → [Smartphone App]              : "Fleet-wide issue detected — alert systems under maintenance, please ride with caution"     : immediately to all affected smartphones
+```
+ 
+> Alert systems are in maintenance mode for all affected helmets during the hold window. No alerts fire during this period.
+ 
+---
+ 
+### Fleet Manager Investigation and Resolution
+ 
+```
+[Fleet Manager] → [Fleet Management System]               : investigate mass alert spike, firmware version, helmet IDs, timestamp                       : on receiving PagerDuty page
+[Fleet Management System] → [Fleet Manager]               : fleet status, firmware version distribution, affected helmet count, alert event log         : immediately
+```
+ 
+---
+ 
+### Outcome 1 — Firmware Bug Confirmed, Rollback Initiated
+ 
+> Fleet Manager confirms the firmware version is the cause. Rollback is initiated via the firmware pipeline — see Flow 10.
+ 
+```
+[Fleet Manager] → [Fleet Management System]               : confirm firmware bug, initiate rollback, firmware version, timestamp                        : on investigation complete
+[Fleet Management System] → [Processing Infrastructure]   : firmware bug confirmed, discard all held alerts for affected firmware version, timestamp     : immediately
+[Processing Infrastructure] → [Processing Infrastructure] : mark all held alerts as firmware-bug false positives, helmet IDs, firmware version          : immediately
+[Processing Infrastructure] → [Cold Storage]              : false positive log entry per held alert, helmet ID, crash timestamp, reason — firmware bug confirmed, firmware version, discarded at : immediately
+[Alerting Infrastructure] → [Helmet HUD]                  : "Fleet-wide issue resolved — alert systems restored"                                        : immediately to all affected helmets
+[Alerting Infrastructure] → [Smartphone App]              : "Fleet-wide issue resolved — alert systems restored"                                        : immediately to all affected smartphones
+```
+ 
+> No alerts fired. All held alert events written to cold storage with firmware bug remark. Riders informed systems are restored.
+ 
+---
+ 
+### Outcome 2 — No Firmware Bug Found, Held Alerts May Be Genuine
+ 
+> Fleet Manager investigation finds no firmware cause. Held alerts are returned to Processing Infrastructure for individual re-validation.
+ 
+```
+[Fleet Manager] → [Fleet Management System]               : no firmware bug found, release held alerts for re-validation, timestamp                     : on investigation complete
+[Fleet Management System] → [Processing Infrastructure]   : release held alerts, helmet IDs, held alert timestamps                                      : immediately
+[Processing Infrastructure] → [Processing Infrastructure] : re-validate each held alert individually against available telemetry                        : immediately on release
+```
+ 
+#### Sub-branch — Held Alert Under 24 Hours (Hot Storage Data Available)
+ 
+```
+[Processing Infrastructure] → [Hot Storage]               : query recent telemetry for helmet ID                                                        : on each held alert re-validation
+[Hot Storage] → [Processing Infrastructure]               : telemetry history                                                                           : immediately
+[Processing Infrastructure] → [Processing Infrastructure] : validate crash event against telemetry history                                              : immediately
+```
+ 
+##### Validated as False Positive
+ 
+```
+[Processing Infrastructure] → [Cold Storage]              : false positive log entry, helmet ID, crash timestamp, reason, held alert context            : immediately
+```
+ 
+> No alert fired.
+ 
+##### Validated as Genuine Crash
+ 
+```
+[Processing Infrastructure] → [Alerting Infrastructure]   : crash confirmed, helmet ID, crash timestamp, incident location                              : immediately
+[Alerting Infrastructure] → [Helmet HUD]                  : 30-second countdown — "Crash detected — cancel to abort alert"                             : immediately
+[Alerting Infrastructure] → [Smartphone App]              : 30-second countdown — "Crash detected — cancel to abort alert"                             : immediately
+```
+ 
+> Full Flow 3 alert countdown runs unmodified from this point. See Flow 3 — Alert Countdown.
+ 
+---
+ 
+#### Sub-branch — Held Alert Over 24 Hours (No Hot Storage Data Available)
+ 
+> Hot storage retention window has expired. Processing Infrastructure has no telemetry to validate against. Decision goes to rider — same mechanic as Flow 4 Retrospective Alert.
+ 
+```
+[Processing Infrastructure] → [Hot Storage]               : query recent telemetry for helmet ID                                                        : on re-validation attempt
+[Hot Storage] → [Processing Infrastructure]               : no data found — retention window expired                                                    : immediately
+[Processing Infrastructure] → [Alerting Infrastructure]   : cannot validate — telemetry expired, escalate to rider, helmet ID, crash timestamp, incident location from held alert : immediately
+[Alerting Infrastructure] → [Smartphone App]              : persistent notification — "A crash alert from [timestamp] could not be verified — do you want to alert emergency services?" : immediately
+[Alerting Infrastructure] → [Helmet HUD]                  : persistent notification — "Crash alert from [timestamp] unverified — see smartphone app"    : immediately if helmet still online
+```
+ 
+##### Rider Confirms
+ 
+```
+[Rider] → [Smartphone App]                                : confirm                                                                                     : on rider action
+[Smartphone App] → [Alerting Infrastructure]              : confirm signal, helmet ID, timestamp                                                        : immediately
+[Alerting Infrastructure] → [Next of Kin]                 : crash alert, incident location from held alert, current location, incident timestamp        : immediately
+[Alerting Infrastructure] → [Emergency Services]          : crash alert, incident location from held alert, current location, incident timestamp, next of kin contact : immediately, independent of Next of Kin channel
+[Alerting Infrastructure] → [Cold Storage]                : incident record, helmet ID, crash timestamp, incident location, confirmed by rider after hold expiry, delivery outcome per channel : on resolution
+```
+ 
+##### Rider Cancels
+ 
+```
+[Rider] → [Smartphone App]                                : cancel                                                                                      : on rider action
+[Smartphone App] → [Alerting Infrastructure]              : cancel signal, helmet ID, timestamp                                                         : immediately
+[Alerting Infrastructure] → [Cold Storage]                : cancelled alert record, helmet ID, crash timestamp, cancelled by rider after hold expiry     : immediately
+```
+ 
+> No alert fired.
+ 
+##### Rider Unreachable
+ 
+```
+[Alerting Infrastructure] → [Alerting Infrastructure]     : no rider response, smartphone unreachable                                                   : on notification delivery failure
+[Alerting Infrastructure] → [Cold Storage]                : unresolved alert record, helmet ID, crash timestamp, incident location, rider unreachable, no alert fired : immediately
+```
+ 
+> No alert fired. Incident logged to cold storage for Fleet Manager review.
+ 
