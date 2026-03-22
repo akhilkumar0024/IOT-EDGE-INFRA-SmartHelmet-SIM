@@ -1467,4 +1467,101 @@
 ```
  
 > No alert fired. Incident logged to cold storage for Fleet Manager review.
+
+
+## Flow 9C — Helmet Telemetry to Smartphone Failure (Device Layer)
+
+> **Precondition:** Rider is mid-ride. Helmet and Smartphone are paired and telemetry is flowing normally. Bluetooth link between Helmet and Smartphone drops unexpectedly.
+>
+> **Note:** This flow covers mid-ride Bluetooth failure only. Bluetooth failure at startup (before pairing is established) is covered in Flow 2 Sad Path 1.
+>
+> **Note:** LWT does not fire in this flow. The Smartphone remains connected to IoT Core throughout — only the Bluetooth link to the Helmet is lost. The Smartphone actively publishes the disconnection event itself.
+
+---
+
+### Bluetooth Link Drops
+
+```
+[Helmet] → [Helmet]                       : bluetooth link lost, no smartphone connection detected                  : immediately on disconnection
+[Helmet] → [Helmet]                       : retain all telemetry in buffer, do not clear                            : immediately
+[Helmet HUD] → [Rider]                    : "Bluetooth disconnected — telemetry and alert systems offline"          : immediately
+
+[Smartphone] → [Smartphone]               : bluetooth link lost, helmet disconnected                                : immediately on disconnection
+[Smartphone] → [Smartphone Local Storage] : discard partial telemetry batch (incomplete 10-second window)           : immediately — helmet buffer retains full data, no data lost
+[Smartphone App] → [Rider]                : "Helmet disconnected — telemetry and alert systems offline"             : immediately
+```
+
+---
+
+### Smartphone Notifies Cloud
+
+```
+[Smartphone] → [AWS IoT Core]             : bluetooth disconnected event, helmet ID, timestamp                      : immediately via helmet/{helmet_id}/bluetooth_disconnected topic
+[AWS IoT Core] → [Processing Infrastructure] : bluetooth disconnected event, helmet ID, timestamp                   : immediately via IoT Core rules engine
+[Processing Infrastructure] → [Processing Infrastructure] : check last telemetry for crash flag, helmet ID          : immediately on bluetooth disconnected event received
+```
+
+---
+
+### Branch A — No Crash Flag in Last Telemetry
+
+```
+[Processing Infrastructure] → [Processing Infrastructure] : no crash flag detected, mark helmet as bluetooth disconnected, helmet ID, timestamp : immediately
+[Processing Infrastructure] → [Cold Storage]              : bluetooth disconnected log entry, helmet ID, last known timestamp, no crash flag    : immediately
+```
+
+> No alert triggered.
+
+---
+
+### Branch B — Crash Flag Present in Last Telemetry
+
+> Validation and alert mechanics identical to Flow 8 Case 2. See Flow 8 — Case 2 — Crash Flag Present in Last Telemetry.
+
+---
+
+### Helmet Continues Operating — Buffer Only
+
+```
+[Helmet Sensors] → [Helmet]               : accelerometer, speed, edge result, helmet ID, timestamp                 : every 1 second
+[Helmet] → [Helmet]                       : store all telemetry in buffer                                           : every 1 second
+```
+
+---
+
+### On Bluetooth Restore
+
+```
+[Helmet] → [Smartphone]                   : bluetooth reconnection, helmet ID, timestamp                            : on link restore
+[Smartphone] → [Helmet]                   : pairing confirmation                                                    : immediately
+[Smartphone App] → [Rider]                : "Helmet reconnected — telemetry and alert systems restored"             : immediately
+[Helmet HUD] → [Rider]                    : "Bluetooth restored — systems operational"                              : immediately
+
+[Smartphone] → [AWS IoT Core]             : bluetooth restored event, helmet ID, timestamp                          : immediately via helmet/{helmet_id}/bluetooth_restored topic
+[AWS IoT Core] → [Processing Infrastructure] : bluetooth restored event, helmet ID, timestamp                       : immediately via IoT Core rules engine
+[Processing Infrastructure] → [Processing Infrastructure] : mark helmet as bluetooth restored, helmet ID, timestamp : immediately
+```
+
+---
+
+### Catch-Up Sync on Restore
+
+> Backlog flush mechanics identical to Flow 2 Sad Path 2A. See Flow 2 Sad Path 2A — Backlog Flush via Catch-Up Channel.
+
+```
+[Telemetry Infrastructure] → [Processing Infrastructure] : synced buffered data                                     : on each acknowledged chunk
+[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately on each chunk received
+```
+
+---
+
+### Branch C — No Crash Flag in Synced Data
+
+> Catch-up sync completes normally. No alert triggered.
+
+---
+
+### Branch D — Crash Flag Detected in Synced Data
+
+> Retrospective alert mechanic runs. Identical to Flow 4 Retrospective Alert. See Flow 4 — Retrospective Alert.
  
