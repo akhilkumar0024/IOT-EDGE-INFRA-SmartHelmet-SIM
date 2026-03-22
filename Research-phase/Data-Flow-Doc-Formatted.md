@@ -1130,3 +1130,207 @@
 ```
 
 > Rider confirms or declines — same flow as Flow 6 Scenario 2B.
+
+---
+
+## Flow 9 — Mass Alert and Infrastructure Failure Detection
+
+> **Purpose:** This flow covers how the system detects, responds to, and recovers from infrastructure failures across all layers — device, cloud, config, and observability. It also covers how the system distinguishes a real mass incident from a firmware bug or infrastructure misclassification when a large number of simultaneous crash alerts are received.
+>
+> **Sub-flows:**
+>
+> | # | Sub-flow | Status |
+> |---|---|---|
+> | 9A | Monitoring Stack and Detection
+> | 9B | Sensor Failure (device layer)
+> | 9C | Helmet Telemetry to Smartphone Failure (device layer) 
+> | 9D | Smartphone Telemetry to Cloud Failure (device layer) 
+> | 9E | IoT Core / MQTT Broker Failure (cloud layer) 
+> | 9F | Telemetry Infrastructure Failure (cloud layer) 
+> | 9G | Processing Infrastructure Failure (cloud layer) 
+> | 9H | Alerting Infrastructure Failure (cloud layer) 
+> | 9I | Database Failure (cloud layer)
+> | 9J | Parameter Store Unavailability (config layer) 
+> | 9K | Bad Firmware Update (config layer) 
+> | 9L | Bad Infrastructure Deploy — CI/CD Pipeline (config layer) 
+> | 9M | Monitoring Stack Failure (observability layer)
+
+---
+
+## Flow 9A — Monitoring Stack and Detection
+
+> **Purpose:** This flow defines the detection and alerting chain that underpins all subsequent Flow 9 sub-flows. Every infrastructure failure scenario in Flows 9B onward references this flow for how failures are detected and how engineers are notified.
+>
+> **Monitoring stack:** Prometheus + Alertmanager + Grafana running on ECS Fargate. CloudWatch + SNS used for AWS-native services (IoT Core, Database). PagerDuty is the single paging destination for all alerts regardless of which monitoring path fired.
+>
+> **Dead man's switch:** Monitoring Infrastructure sends a heartbeat ping to Healthchecks.io every 60 seconds. If the heartbeat stops, Healthchecks.io pages the Infrastructure Engineer via PagerDuty independently of the monitoring stack itself.
+>
+> **Firmware version field:** All telemetry payloads include a firmware version field. This enables Processing Infrastructure to correlate mass alert spikes against specific firmware versions during incident triage.
+
+---
+
+### Continuous Health Checks
+
+```
+[Prometheus] → [Telemetry Infrastructure]          : /health endpoint scrape                                        : every 60 seconds
+[Prometheus] → [Processing Infrastructure]         : /health endpoint scrape                                        : every 60 seconds
+[Prometheus] → [Alerting Infrastructure]           : /health endpoint scrape                                        : every 60 seconds
+[Prometheus] → [Database — Hot Storage]            : /health endpoint scrape                                        : every 60 seconds
+[Prometheus] → [Database — Cold Storage]           : /health endpoint scrape                                        : every 60 seconds
+[Prometheus] → [CI/CD Pipeline]                    : /health endpoint scrape                                        : every 60 seconds
+[CloudWatch] → [IoT Core]                          : health and performance metrics scrape                          : every 30 seconds
+```
+
+---
+
+### Continuous Metric Scraping
+
+```
+[Prometheus] → [Telemetry Infrastructure]          : CPU, memory, queue depth, message throughput                   : every 60 seconds
+[Prometheus] → [Processing Infrastructure]         : CPU, memory, queue depth, processing latency                   : every 60 seconds
+[Prometheus] → [Alerting Infrastructure]           : CPU, memory, active alert count, delivery latency              : every 60 seconds
+[Prometheus] → [Database — Hot Storage]            : CPU, memory, write latency, storage utilisation                : every 60 seconds
+[Prometheus] → [Database — Cold Storage]           : CPU, memory, write latency, storage utilisation                : every 60 seconds
+[CloudWatch] → [IoT Core]                          : connection count, message rate, error rate                      : every 30 seconds
+```
+
+---
+
+### Dead Man's Switch
+
+```
+[Monitoring Infrastructure] → [Healthchecks.io]   : heartbeat ping                                                  : every 60 seconds
+[Healthchecks.io] → [Healthchecks.io]             : check heartbeat received within expected window                  : every 60 seconds
+```
+
+#### Sub-branch — Heartbeat Stops
+
+```
+[Healthchecks.io] → [PagerDuty]                   : monitoring infrastructure unreachable, timestamp                 : on missed heartbeat
+[PagerDuty] → [Infrastructure Engineer]           : page — monitoring infrastructure down, timestamp                 : immediately via SMS and call
+```
+
+---
+
+### Threshold Breach Detection
+
+```
+[Prometheus] → [Prometheus]                        : evaluate all scraped metrics against threshold rules             : on every scrape
+[CloudWatch] → [CloudWatch]                        : evaluate IoT Core metrics against alarm thresholds               : on every scrape
+```
+
+#### Sub-branch — Threshold Breached or Component Unreachable (Prometheus path)
+
+```
+[Prometheus] → [Alertmanager]                      : alert fired, component, metric, threshold breached, timestamp    : immediately
+[Alertmanager] → [Alertmanager]                    : deduplicate and group alerts by component and failure type        : immediately
+[Alertmanager] → [PagerDuty]                       : grouped alert, component, failure type, severity, timestamp      : immediately
+[PagerDuty] → [Infrastructure Engineer]            : page — component degraded or unreachable, details, timestamp     : immediately via SMS and call
+```
+
+#### Sub-branch — Threshold Breached (CloudWatch path)
+
+```
+[CloudWatch] → [SNS]                               : alarm triggered, component, metric, threshold breached, timestamp : immediately
+[SNS] → [PagerDuty]                                : alarm details, component, timestamp                               : immediately
+[PagerDuty] → [Infrastructure Engineer]            : page — IoT Core degraded or unreachable, details, timestamp      : immediately via SMS and call
+```
+
+---
+
+### Grafana Dashboard
+
+```
+[Grafana] → [Prometheus]                           : query all component metrics                                      : continuously
+[Grafana] → [CloudWatch]                           : query IoT Core and DB metrics                                    : continuously
+[Grafana] → [Infrastructure Engineer]              : live dashboard — all component health, metrics, active alerts    : available at all times
+```
+
+---
+
+### Mass Alert Threshold Detection
+
+> Mass alert threshold value stored in Parameter Store. Read by Processing Infrastructure at startup.
+
+```
+[Processing Infrastructure] → [Processing Infrastructure] : count simultaneous crash alerts across fleet              : continuously
+[Processing Infrastructure] → [Processing Infrastructure] : compare active alert count against mass alert threshold   : on every crash event received
+```
+
+#### Sub-branch — Threshold Crossed
+
+```
+[Processing Infrastructure] → [Processing Infrastructure] : mass alert threshold crossed — run decision tree          : immediately
+```
+
+---
+
+### Mass Alert Decision Tree
+
+#### Step 1 — Geographic Distribution Check
+
+```
+[Processing Infrastructure] → [Processing Infrastructure] : check geographic distribution of alerts across fleet      : immediately on threshold crossed
+```
+
+##### Branch A — Alerts Geographically Clustered
+
+```
+[Processing Infrastructure] → [Processing Infrastructure] : clustered alerts — likely real mass incident              : on clustering confirmed
+[Processing Infrastructure] → [Alerting Infrastructure]   : proceed with alerts, mass incident flag, timestamp        : immediately
+[Alerting Infrastructure] → [PagerDuty]                   : mass incident in progress, alert volume spike, timestamp  : immediately
+[PagerDuty] → [Infrastructure Engineer]                   : page — mass incident in progress, monitor infra load      : immediately via SMS and call
+```
+
+> Alerts fire normally. No alerts held. Engineer monitors infrastructure load during mass event.
+
+##### Branch B — Alerts Geographically Dispersed
+
+```
+[Processing Infrastructure] → [Processing Infrastructure] : dispersed alerts — likely firmware bug or infra failure — proceed to firmware version check : immediately
+```
+
+---
+
+#### Step 2 — Firmware Version Correlation Check
+
+> Only runs if alerts are geographically dispersed.
+
+```
+[Processing Infrastructure] → [Processing Infrastructure] : check firmware version field across all alerting helmets  : immediately
+```
+
+##### Branch B1 — Alerts Correlated to Specific Firmware Version
+
+```
+[Processing Infrastructure] → [Processing Infrastructure] : firmware version correlation confirmed — likely firmware bug : immediately
+[Processing Infrastructure] → [Alerting Infrastructure]   : hold all dispersed alerts pending Fleet Manager review, helmet IDs, firmware version, timestamp : immediately
+[Alerting Infrastructure] → [PagerDuty]                   : mass alert spike correlated to firmware version, helmet IDs, firmware version, timestamp : immediately
+[PagerDuty] → [Fleet Manager]                             : page — possible firmware bug, rollback may be required, timestamp : immediately via SMS and call
+```
+
+> Alerts held. Fleet Manager investigates. Rollback decision owned by Fleet Manager — see Flow 10.
+
+##### Branch B2 — Alerts Span All Firmware Versions
+
+```
+[Processing Infrastructure] → [Processing Infrastructure] : no firmware version correlation — likely Processing Infra misclassification : immediately
+[Processing Infrastructure] → [Alerting Infrastructure]   : hold all dispersed alerts pending Infrastructure Engineer review, timestamp : immediately
+[Alerting Infrastructure] → [PagerDuty]                   : mass alert spike, no firmware correlation, possible infra misclassification, timestamp : immediately
+[PagerDuty] → [Infrastructure Engineer]                   : page — possible Processing Infra failure, all dispersed alerts held, immediate investigation required : immediately via SMS and call
+```
+
+> All dispersed alerts held. Infrastructure Engineer investigates Processing Infra before any alerts are released or discarded.
+
+---
+
+### Alert Routing Summary
+
+| Failure Type | Notified Via | Recipient |
+|---|---|---|
+| Any cloud infra component degraded or unreachable | PagerDuty | Infrastructure Engineer |
+| IoT Core degraded or unreachable | CloudWatch → SNS → PagerDuty | Infrastructure Engineer |
+| Monitoring Infrastructure down | Healthchecks.io → PagerDuty | Infrastructure Engineer |
+| Mass alert — firmware version correlated | PagerDuty | Fleet Manager |
+| Mass alert — no firmware correlation, infra suspected | PagerDuty | Infrastructure Engineer |
+| Mass alert — geographically clustered, real incident | PagerDuty | Infrastructure Engineer (load monitoring) |

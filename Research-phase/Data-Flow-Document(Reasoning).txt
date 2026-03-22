@@ -268,11 +268,46 @@ or does it wait a short grace period in case it's a brief connectivity blip and 
 i think we can here have a grace period of 5 seconds incase its just a network blip
 
 When cloud checks last telemetry after LWT fires — same two cases as before, crash flag present or not. 
-If no crash flag — does cloud simply mark helmet as unexpectedly offline and log it, or does it still run some level of validation on the last telemetry before deciding?
+If no crash flag — does cloud simply mark helmet as unexpectedly offline and log it, or does it still run some level of validation on the last
+telemetry before deciding?
 The last telemetry is processed by the processing infra for making a decision if the event was a crash or not and trigger the alert accordingly based on LWT
 
 If crash flag is present — full 30 second countdown runs on smartphone only since helmet is gone. But what if the smartphone is also unreachable at this point
  — does cloud attempt the countdown anyway and just let it expire, or does it skip straight to firing the alert?
 The LWT message itself — does it carry any payload like last known helmet ID and timestamp, or is it just a bare disconnect signal?
-There will be a full 30 sec countdown as it will act as a time in case the helmet or smartphone comes back online the alert has the chance of being cancelled by the rider manually 
+There will be a full 30 sec countdown as it will act as a time in case the helmet or smartphone comes back online the alert has the chance of
+being cancelled by the rider manually 
 The LWT message will have the last known helmet ID and timestamp
+
+
+Flow 9 -Mass Alert/Infra Failure (Initial list)
+The infra failure can involve multiple layers 
+Failure of sensors - giving false information triggering crash events 
+Failure of Helmets telemetry services to smartphone
+Failure of Smartphones Telemetry services 
+The another layer of failure is at Cloud Level
+Failure of Telemetry Infra
+Failure of Processing infra 
+failure of DB
+Failure of the Alerting infra 
+The problems with Firmware update/App update
+The failure of monitoring stack to detect the infra failing 
+These are the types of failures i can identify as of now i need to cover all this failure is there any that am missing
+Failure of CI/CD Pipeline
+IOT Core/MQTT broker failure 
+Parameter Store that contains the configuration data like threshold values for retries and alert countdown window etc
+Cascading failure like a slow DB  causing the telemetry services to fail to write data to the DB and then the processing services to fail
+to process the data
+The cascading failure can occur at any level from Db read, write, Processing infra lack of memory or cpu etc
+Overwhelming of alert infra under the mass alert scenario
+
+the monitoring stack/INfrastructure is responsibe for making health checks of all the other infrastructures on a timely basis
+i havent decided the  frequecny of health checks, but maybe every minute the health check can be done to detect if any infrastructure goes down,
+a standard Prometheus and graffana stack to see the CPU, memory the Storage usage of various infra like telemetry, alert infra, DB 
+if am not wrong i think to detect a mass failure i have said that a threshold beyong which if all the devices send an alert then it can be
+termed as some issue with infra failure wether at sensor level among millions of users due to a recent firmware update etc
+
+
+Deads Mans hand 
+This is the service that will be monitoring the monitoring infrastructure to inform the engineer if the monitoring infrastructure itself goes down 
+
