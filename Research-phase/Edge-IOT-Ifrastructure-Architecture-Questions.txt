@@ -104,9 +104,14 @@ when the IOT core comes back up the standard telemetry flow resumes, the catchup
 
 Flow 9F - Telemetry Infra Failure
 
-The telemetry Infrastructure is responsible for collection information from the users and giving it to the processing Infrastructure 
-the failure of telemetry Infrastructure will result in the failure of the processing infra 
+The telemetry Infrastructure is responsible for collection information from the users add it to the hot storage add the crash events to the SQS and giving it to the processing 
+Infrastructure the failure of telemetry Infrastructure will result in the failure of the processing infra from getting the data
+The telemetry infrastructure will also be the one passing the control flags/info like battery death or low battery message to the cold storage and the separate SQS queue maybe i will
+call it controlQueue i dont know anyway it wont be the queue where the telemetryinfra will be publishing the crash events
+
 no new data will be written into the storage no new data will be processed the failure of processing infra will depend on wether the processing infra is tightly coupled with the 
 telemetry infra or it lives separately 
-when the telemetry infra becomes unreachable the IOT core needs to be made aware and the smarphone has to be informed too, the monitoring infra will monitor the health of the telemetry infra and inform the infrastructure engineer
-the user will be informed by the IOT core that the telemetry infra is not available hence the alert systems are down 
+
+when the telemetry infra becomes unreachable the IOT core needs to be made aware and the smarphone has to be informed to IOT core will inform the smartphone, the monitoring infra 
+will monitor the health of the  telemetry infra and inform the infrastructure engineer the user will be informed by the IOT core that the telemetry infra is not available hence 
+the alert systems are down 

@@ -35,6 +35,7 @@
 [Smartphone] → [Telemetry Infrastructure] : connectivity check                                                      : after bluetooth pairing confirmed
 [Telemetry Infrastructure] → [Smartphone] : connectivity confirmation                                               : on receiving connectivity check
 [Smartphone App] → [Rider]                : "Cloud connection up"                                                   : on connectivity confirmation
+[Smartphone] → [AWS IoT Core]             : MQTT session established, subscribe to helmet/{helmet_id}/infra/status  : on connectivity confirmation
 ```
 
 ### Sensor Health Check
@@ -1170,7 +1171,7 @@
 > | 9C | Helmet Telemetry to Smartphone Failure (device layer) | ✅ Complete |
 > | 9D | Smartphone Telemetry to Cloud Failure (device layer) | ✅ Complete |
 > | 9E | IoT Core / MQTT Broker Failure (cloud layer) | ✅ Complete |
-> | 9F | Telemetry Infrastructure Failure (cloud layer) | ⬜ Pending |
+> | 9F | Telemetry Infrastructure Failure (cloud layer) | ✅ Complete |
 > | 9G | Processing Infrastructure Failure (cloud layer) | ⬜ Pending |
 > | 9H | Alerting Infrastructure Failure (cloud layer) | ⬜ Pending |
 > | 9I | Database Failure (cloud layer) | ⬜ Pending |
@@ -1685,6 +1686,112 @@
 ```
 
 > LWT re-registration happens automatically as part of MQTT reconnection. No special infrastructure configuration required.
+
+---
+
+### Catch-Up Sync on Recovery
+
+> Backlog flush mechanics identical to Flow 2 Sad Path 2A. See Flow 2 Sad Path 2A — Backlog Flush via Catch-Up Channel.
+
+```
+[Telemetry Infrastructure] → [Hot Storage]               : synced buffered data, helmet ID, timestamp range         : on each acknowledged chunk
+[Telemetry Infrastructure] → [Telemetry Infrastructure]  : inspect synced chunk for crash flag                      : immediately
+[Telemetry Infrastructure] → [SQS Crash Queue]           : crash event pointer, helmet ID, timestamp                : if crash flag found in chunk
+[Processing Infrastructure] → [SQS Crash Queue]          : read crash event pointer                                  : event-driven
+[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately on reading pointer from SQS
+```
+
+---
+
+### Branch C — No Crash Flag in Synced Data
+
+> Catch-up sync completes normally. No alert triggered.
+
+---
+
+### Branch D — Crash Flag Detected in Synced Data
+
+> Retrospective alert mechanic runs. Identical to Flow 4 Retrospective Alert. See Flow 4 — Retrospective Alert.
+
+---
+
+## Flow 9F — Telemetry Infrastructure Failure (Cloud Layer)
+
+> **Precondition:** Rider is mid-ride. Bluetooth between Helmet and Smartphone is active. Smartphone is connected to AWS IoT Core. Telemetry Infrastructure becomes unavailable. IoT Core is still up — the MQTT session between Smartphone and IoT Core remains intact throughout.
+>
+> **Known limitation:** Real-time crash alerts cannot fire during a Telemetry Infrastructure outage. Telemetry Infrastructure is the service that writes crash pointers to SQS Crash Queue. With it down, no new crash events reach Processing Infrastructure. Any crash that occurs during the outage is captured in the Smartphone buffer and processed retrospectively when Telemetry Infrastructure recovers — same mechanic as Flow 4 Retrospective Alert.
+>
+> **New infrastructure:** `helmet/{helmet_id}/infra/status` — cloud-to-device MQTT topic published by Monitoring Infrastructure via IoT Core. Smartphone subscribes at session startup (see Flow 1 — Cloud Connectivity Check). Provisioned in Terraform alongside all other topics. Monitoring Infrastructure IAM policy scoped to publish on `helmet/*/infra/status`.
+
+---
+
+### Monitoring Stack Detects Telemetry Infrastructure Failure
+
+```
+[Prometheus] → [Telemetry Infrastructure]          : /health endpoint scrape                                        : every 60 seconds
+[Telemetry Infrastructure] → [Prometheus]          : no response                                                    : —
+[Prometheus] → [Alertmanager]                      : alert fired, Telemetry Infrastructure unreachable, timestamp   : on health check failure threshold crossed
+[Alertmanager] → [PagerDuty]                       : Telemetry Infrastructure down, timestamp                       : immediately
+[PagerDuty] → [Infrastructure Engineer]            : page — Telemetry Infrastructure down, timestamp                : immediately via SMS and call
+```
+
+> See Flow 9A — Threshold Breach Detection for full monitoring chain.
+
+---
+
+### Rider Notification
+
+```
+[Monitoring Infrastructure] → [AWS IoT Core]       : publish infra down status, helmet ID, timestamp               : once per active helmet, on failure confirmed
+[AWS IoT Core] → [Smartphone]                      : infra down status message                                      : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                         : "Alert system failure — this is not a device issue, please ride with caution" : immediately
+[Smartphone] → [Helmet HUD]                        : infra down status, helmet ID, timestamp                        : immediately via Bluetooth
+[Helmet HUD] → [Rider]                             : "Alert system failure — this is not a device issue, please ride with caution" : immediately
+```
+
+> Smartphone MQTT session remains active — no reconnection required. IoT Core is up. One status message published per active helmet — not one per failed delivery.
+
+---
+
+### Device Behaviour During Outage
+
+```
+[Helmet Sensors] → [Helmet]               : accelerometer, speed, edge result, helmet ID, timestamp                 : every 1 second
+[Helmet] → [Smartphone]                   : telemetry payload, helmet ID, timestamp                                 : every 1 second
+[Smartphone] → [Smartphone Local Storage] : telemetry payload                                                       : every 1 second until Telemetry Infrastructure restores
+```
+
+> Helmet and Smartphone continue operating normally. All telemetry buffered locally on Smartphone. No data is lost.
+
+---
+
+### Processing Infrastructure Behaviour During Outage
+
+> Telemetry Infrastructure is the only service that writes to SQS Crash Queue and SQS Control Queue. With it down, no new events enter either queue. Processing Infrastructure is not failed — it continues to drain any crash or control events that were already in the queues before the failure. Once those are consumed, Processing Infrastructure goes idle and waits. Pre-failure crash events in the queue have their corresponding telemetry already written to hot storage and are processed normally.
+
+```
+[Processing Infrastructure] → [SQS Crash Queue]    : read any pre-failure crash event pointers                      : event-driven, until queue is empty
+[Processing Infrastructure] → [SQS Control Queue]  : read any pre-failure control event pointers                    : event-driven, until queue is empty
+```
+
+> No alert mechanics change for pre-failure crash events. Hot storage data written before the failure is available and valid for validation.
+
+---
+
+### On Telemetry Infrastructure Recovery
+
+```
+[Prometheus] → [Telemetry Infrastructure]          : /health endpoint scrape                                        : every 60 seconds
+[Telemetry Infrastructure] → [Prometheus]          : health check passed                                            : on recovery
+[Prometheus] → [Alertmanager]                      : alert resolved, Telemetry Infrastructure restored, timestamp   : immediately
+[Alertmanager] → [PagerDuty]                       : Telemetry Infrastructure restored, timestamp                   : immediately
+[PagerDuty] → [Infrastructure Engineer]            : Telemetry Infrastructure restored, timestamp                   : immediately
+[Monitoring Infrastructure] → [AWS IoT Core]       : publish infra restored status, helmet ID, timestamp           : once per active helmet, on recovery confirmed
+[AWS IoT Core] → [Smartphone]                      : infra restored status message                                  : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                         : "Alert system restored — telemetry operational"               : immediately
+[Smartphone] → [Helmet HUD]                        : infra restored status, helmet ID, timestamp                   : immediately via Bluetooth
+[Helmet HUD] → [Rider]                             : "Alert system restored — telemetry operational"               : immediately
+```
 
 ---
 
