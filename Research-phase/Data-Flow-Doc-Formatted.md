@@ -1589,3 +1589,104 @@ active. Smartphone is unable to publish telemetry to the cloud.
 > **No new infrastructure behaviour is introduced in this flow.** All failure modes
 either reference existing flows or fall outside the infrastructure scope of this
 project.
+
+
+## Flow 9E — IoT Core / MQTT Broker Failure (Cloud Layer)
+
+> **Precondition:** Rider is mid-ride. Bluetooth between Helmet and Smartphone is
+active. IoT Core becomes unreachable — either due to internet loss on the smartphone
+side or IoT Core itself going down.
+>
+> **Known limitation:** IoT Core is the MQTT broker responsible for firing LWT
+messages on unexpected helmet dropout. If IoT Core is down, LWT cannot fire. Any
+crash that occurs during an IoT Core outage will not trigger an LWT-based alert.
+The crash event will be captured in the helmet and smartphone buffers and processed
+retrospectively when IoT Core recovers — same mechanic as Flow 4 Retrospective Alert.
+>
+> **Data collection during outage:** Helmet continues sensing and sending to
+smartphone every second. Smartphone continues buffering locally. Collection never
+pauses — only upload to cloud is interrupted. Catch-up pipeline flushes backlog
+on restore.
+
+---
+
+### Smartphone Detects IoT Core Unreachable
+```
+[Smartphone] → [Smartphone]               : attempt to reach IoT Core endpoint                                      : on connectivity check
+[Smartphone] → [Smartphone]               : IoT Core endpoint unreachable                                           : on failed connection attempt
+```
+
+---
+
+### Branch A — Internet Loss (Smartphone Cannot Reach Anything)
+```
+[Smartphone] → [Smartphone]               : internet unreachable, not an IoT Core specific failure                  : on connectivity check
+[Smartphone App] → [Rider]                : "Network failure — telemetry and alert systems not operational"          : immediately
+[Helmet HUD] → [Rider]                    : "Network failure — telemetry and alert systems not operational"          : immediately
+```
+
+> Smartphone buffers locally. Helmet continues sensing and buffering. See Flow 2
+Sad Path 2A for full buffering and catch-up pipeline behaviour.
+
+---
+
+### Branch B — IoT Core Down (Smartphone Has Internet, IoT Core Endpoint Unreachable)
+```
+[Smartphone] → [Smartphone]               : internet reachable, IoT Core endpoint unreachable — IoT Core down       : on connectivity check
+[Smartphone App] → [Rider]                : "Alert system failure — this is not a device issue, please ride with caution" : immediately
+[Helmet HUD] → [Rider]                    : "Alert system failure — this is not a device issue, please ride with caution" : immediately
+```
+
+> Smartphone buffers locally. Helmet continues sensing and buffering. See Flow 2
+Sad Path 2A for full buffering and catch-up pipeline behaviour.
+
+---
+
+### Cloud Side — Monitoring Detects IoT Core Failure
+```
+[CloudWatch] → [IoT Core]                          : health and performance metrics scrape                          : every 30 seconds
+[IoT Core] → [CloudWatch]                          : no response                                                    : —
+[CloudWatch] → [SNS]                               : alarm triggered, IoT Core unreachable, timestamp               : immediately
+[SNS] → [PagerDuty]                                : alarm details, IoT Core unreachable, timestamp                 : immediately
+[PagerDuty] → [Infrastructure Engineer]            : page — IoT Core down, timestamp                                : immediately via SMS and call
+```
+
+> See Flow 9A — Alert Routing for full monitoring chain.
+
+---
+
+### On IoT Core Recovery
+```
+[Smartphone] → [Smartphone]               : IoT Core endpoint reachable                                             : on periodic connectivity check
+[Smartphone] → [AWS IoT Core]             : reconnect, re-register LWT, helmet ID, timestamp                        : immediately on IoT Core reachable
+[AWS IoT Core] → [Smartphone]             : connection confirmed, LWT registered                                     : immediately
+[Smartphone App] → [Rider]                : "Alert system restored — telemetry operational"                         : immediately
+[Helmet HUD] → [Rider]                    : "Alert system restored — telemetry operational"                         : immediately
+```
+
+> LWT re-registration happens automatically as part of MQTT reconnection. No special
+infrastructure configuration required.
+
+---
+
+### Catch-Up Sync on Recovery
+
+> Backlog flush mechanics identical to Flow 2 Sad Path 2A. See Flow 2 Sad Path 2A
+— Backlog Flush via Catch-Up Channel.
+```
+[Telemetry Infrastructure] → [Processing Infrastructure] : synced buffered data                                     : on each acknowledged chunk
+[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately on each chunk received
+```
+
+---
+
+### Branch C — No Crash Flag in Synced Data
+
+> Catch-up sync completes normally. No alert triggered.
+
+---
+
+### Branch D — Crash Flag Detected in Synced Data
+
+> Retrospective alert mechanic runs. Identical to Flow 4 Retrospective Alert.
+See Flow 4 — Retrospective Alert.

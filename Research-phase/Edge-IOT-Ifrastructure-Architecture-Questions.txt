@@ -78,4 +78,27 @@ the helmet should alert the user on both the helmet and the smartphone app, and 
 What does "the infra is healthy" look like to you?
 the telemetry reception is fine, the infra monitoring each helmet is fine, the alerting system is fine i guess
 
-FLOW 9C questions
+FLOW 9C questions 
+(almost all scenarios are already covered in earlier flow)
+
+Flow 9E 
+what happens when IoT Core / the MQTT broker goes down?
+The IOT Core / MQTT browser sits betweeen the smartphone and the Cloud(telemetry infra)
+The MQTT broker is what fires the LWT in the event of a crash when the helmet goes down in an unexpected manner etc so the cloud must be able to
+ensure that the MQTT/IOT broker is alive to act as a relay between the smartphone and the Cloud
+
+From the perspective of the Smartphone 
+There are two scenarios 
+1. lack of access to IOT Core Due to internet 
+2. Iot core itself is down 
+
+In both the cases the smartphone should be able to detect this and alert the user (that telemetry infra the alet infra is not operational)
+if due to internet then warn about network failure if due to Iot core being down then warn about alert system failure and assure the failure
+is not on the side of the rider 
+the helmet and the smarphone should start storing the telemetry data
+
+From the perspective of the cloud its the IOT Core service that has gone down the monitoring service that is watching the health of the 
+IOT Core should inform the Infrastructure engineer 
+
+when the IOT core comes back up the standard telemetry flow resumes, the catchup pipeline becomes operational to flush the stored data in the smartphone
+
