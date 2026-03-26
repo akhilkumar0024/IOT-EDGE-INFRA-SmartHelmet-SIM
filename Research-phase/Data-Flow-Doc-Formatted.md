@@ -1565,3 +1565,27 @@
 
 > Retrospective alert mechanic runs. Identical to Flow 4 Retrospective Alert. See Flow 4 — Retrospective Alert.
  
+ ## Flow 9D — Smartphone Telemetry to Cloud Failure (Device Layer)
+
+> **Architecture note:** All prior flows that show `[Smartphone] → [Telemetry
+Infrastructure]` represent the logical data path. The actual transport layer is
+`Smartphone → AWS IoT Core (MQTT) → IoT Rules Engine → Telemetry Infrastructure`.
+IoT Core sits implicitly in every one of those arrows. Flow 9E covers IoT Core
+failure specifically.
+
+> **Precondition:** Rider is mid-ride. Bluetooth between Helmet and Smartphone is
+active. Smartphone is unable to publish telemetry to the cloud.
+
+> **Scenarios covered:**
+>
+> | Scenario | Handling |
+> |---|---|
+> | Loss of internet | See Flow 2 Sad Path 2A — behaviour is identical mid-ride |
+> | Telemetry Infrastructure unreachable | See Flow 2 Sad Path 2B — behaviour is identical mid-ride |
+> | IoT Core / MQTT broker failure | See Flow 9E |
+> | Smartphone device failure | Out of scope — cloud detects silence, Flow 8 runs |
+> | Smartphone app failure | Out of scope — cloud detects silence, Flow 8 runs |
+
+> **No new infrastructure behaviour is introduced in this flow.** All failure modes
+either reference existing flows or fall outside the infrastructure scope of this
+project.
