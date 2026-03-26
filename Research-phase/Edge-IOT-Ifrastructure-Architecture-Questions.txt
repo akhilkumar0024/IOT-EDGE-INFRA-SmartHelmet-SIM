@@ -77,3 +77,5 @@ the helmet should alert the user on both the helmet and the smartphone app, and 
 
 What does "the infra is healthy" look like to you?
 the telemetry reception is fine, the infra monitoring each helmet is fine, the alerting system is fine i guess
+
+FLOW 9C questions
