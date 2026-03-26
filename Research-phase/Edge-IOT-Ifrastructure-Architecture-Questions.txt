@@ -102,3 +102,11 @@ IOT Core should inform the Infrastructure engineer
 
 when the IOT core comes back up the standard telemetry flow resumes, the catchup pipeline becomes operational to flush the stored data in the smartphone
 
+Flow 9F - Telemetry Infra Failure
+
+The telemetry Infrastructure is responsible for collection information from the users and giving it to the processing Infrastructure 
+the failure of telemetry Infrastructure will result in the failure of the processing infra 
+no new data will be written into the storage no new data will be processed the failure of processing infra will depend on wether the processing infra is tightly coupled with the 
+telemetry infra or it lives separately 
+when the telemetry infra becomes unreachable the IOT core needs to be made aware and the smarphone has to be informed too, the monitoring infra will monitor the health of the telemetry infra and inform the infrastructure engineer
+the user will be informed by the IOT core that the telemetry infra is not available hence the alert systems are down 

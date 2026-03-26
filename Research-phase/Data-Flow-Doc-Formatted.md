@@ -66,10 +66,14 @@
 ```
 [Helmet] → [Smartphone]                   : buffered telemetry data, helmet ID, timestamp                           : on non-empty buffer detected
 [Smartphone] → [Telemetry Infrastructure] : buffered telemetry data, helmet ID, timestamp                           : immediately
+[Telemetry Infrastructure] → [Hot Storage] : buffered telemetry data, helmet ID, timestamp range                   : on receiving buffered data
 [Telemetry Infrastructure] → [Smartphone] : sync acknowledgement                                                    : on receiving buffered data
 [Smartphone] → [Helmet]                   : sync acknowledgement                                                    : immediately
 [Helmet] → [Helmet]                       : clear buffer storage                                                    : on receiving sync acknowledgement
-[Telemetry Infrastructure] → [Processing Infrastructure] : buffered telemetry data                                  : on receiving buffered data
+[Telemetry Infrastructure] → [Telemetry Infrastructure] : inspect buffered data for crash flag                      : immediately
+[Telemetry Infrastructure] → [SQS Crash Queue] : crash event pointer, helmet ID, timestamp                         : if crash flag found
+[Processing Infrastructure] → [SQS Crash Queue] : read crash event pointer                                         : event-driven
+[Processing Infrastructure] → [Hot Storage] : query telemetry history for helmet ID                                 : immediately on crash event received
 [Processing Infrastructure] → [Processing Infrastructure] : scan for alert events in buffered data                  : immediately
 ```
 
@@ -460,15 +464,19 @@
 
 ```
 [Helmet Sensors] → [Helmet]               : accelerometer spike, speed data, edge result flagged as crash, helmet ID, timestamp : on crash detection
-[Helmet] → [Smartphone]                   : crash event, telemetry payload, helmet ID, timestamp                    : immediately
-[Smartphone] → [AWS IoT Core]             : crash event, telemetry payload, helmet ID, timestamp                    : immediately via helmet/{helmet_id}/crash topic
-[AWS IoT Core] → [Processing Infrastructure] : crash event, telemetry payload, helmet ID, timestamp                : immediately via IoT Core rules engine
+[Helmet] → [Smartphone]                   : telemetry payload with crash flag, helmet ID, timestamp                 : immediately
+[Smartphone] → [AWS IoT Core]             : telemetry payload with crash flag, helmet ID, timestamp                 : immediately via helmet/{helmet_id}/telemetry topic
+[AWS IoT Core] → [Telemetry Infrastructure] : telemetry payload with crash flag, helmet ID, timestamp              : immediately via IoT Core rules engine
+[Telemetry Infrastructure] → [Hot Storage] : telemetry payload with crash flag, helmet ID, timestamp               : immediately
+[Telemetry Infrastructure] → [Telemetry Infrastructure] : inspect batch for crash flag                              : immediately
+[Telemetry Infrastructure] → [SQS Crash Queue] : crash event pointer, helmet ID, timestamp                         : on crash flag detected
+[Processing Infrastructure] → [SQS Crash Queue] : read crash event pointer                                         : event-driven
 ```
 
 ### Processing Infrastructure Validates Crash Event
 
 ```
-[Processing Infrastructure] → [Hot Storage] : query recent telemetry history for helmet ID                         : immediately on crash event received
+[Processing Infrastructure] → [Hot Storage] : query recent telemetry history for helmet ID                         : immediately on reading crash event pointer from SQS
 [Hot Storage] → [Processing Infrastructure] : recent telemetry history                                              : immediately
 [Processing Infrastructure] → [Processing Infrastructure] : validate crash event against telemetry history          : immediately
 ```
@@ -609,8 +617,11 @@
 [Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : 50-second chunk of backlog data, chunk sequence number, helmet ID, timestamp range : starting from oldest unacknowledged chunk
 [Telemetry Infrastructure] → [Smartphone] : chunk acknowledgement, chunk sequence number                            : on receiving full 50-second chunk
 [Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : next 50-second chunk                                 : on receiving acknowledgement of previous chunk
-[Telemetry Infrastructure] → [Processing Infrastructure] : synced buffered data                                     : on each acknowledged chunk
-[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately
+[Telemetry Infrastructure] → [Hot Storage] : synced buffered data, helmet ID, timestamp range                       : on each acknowledged chunk
+[Telemetry Infrastructure] → [Telemetry Infrastructure] : inspect synced chunk for crash flag                       : immediately
+[Telemetry Infrastructure] → [SQS Crash Queue] : crash event pointer, helmet ID, timestamp                         : if crash flag found in chunk
+[Processing Infrastructure] → [SQS Crash Queue] : read crash event pointer                                         : event-driven
+[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately on reading pointer from SQS
 ```
 
 ---
@@ -726,7 +737,9 @@
 
 [Helmet] → [Smartphone]                   : graceful shutdown message, helmet ID, timestamp                         : after remaining telemetry flushed
 [Smartphone] → [Telemetry Infrastructure] : graceful shutdown message, helmet ID, timestamp                         : immediately
-[Telemetry Infrastructure] → [Processing Infrastructure] : graceful shutdown message, helmet ID, timestamp          : immediately
+[Telemetry Infrastructure] → [Hot Storage] : graceful shutdown message, helmet ID, timestamp                        : immediately
+[Telemetry Infrastructure] → [SQS Control Queue] : graceful shutdown message pointer, helmet ID, timestamp          : immediately
+[Processing Infrastructure] → [SQS Control Queue] : read graceful shutdown message pointer                          : event-driven
 [Processing Infrastructure] → [Processing Infrastructure] : mark helmet as gracefully offline                       : immediately
 [Processing Infrastructure] → [Telemetry Infrastructure] : shutdown acknowledgement, helmet ID, timestamp           : immediately
 [Telemetry Infrastructure] → [Smartphone] : shutdown acknowledgement, helmet ID, timestamp                          : immediately
@@ -767,8 +780,11 @@
 
 ```
 [Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : buffered telemetry payloads, graceful shutdown message, helmet ID, timestamp range : on connectivity restore
-[Telemetry Infrastructure] → [Processing Infrastructure]     : buffered telemetry payloads, graceful shutdown message, helmet ID, timestamp range : immediately
-[Telemetry Infrastructure] → [Smartphone]                    : acknowledgement                                       : on successful receive
+[Telemetry Infrastructure] → [Hot Storage]                   : buffered telemetry payloads, helmet ID, timestamp range : immediately
+[Telemetry Infrastructure] → [SQS Control Queue]             : graceful shutdown message pointer, helmet ID, timestamp : immediately
+[Processing Infrastructure] → [SQS Control Queue]            : read graceful shutdown message pointer                  : event-driven
+[Processing Infrastructure] → [Hot Storage]                  : query telemetry history for helmet ID                   : immediately on reading pointer from SQS
+[Telemetry Infrastructure] → [Smartphone]                    : acknowledgement                                          : on successful receive
 ```
 
 #### Processing Infrastructure Checks Flow 8 Status
@@ -879,7 +895,9 @@
 [Helmet] → [Helmet]                       : battery at 10% threshold detected                                       : on threshold breach
 [Helmet] → [Smartphone]                   : low battery warning, battery percentage, helmet ID, timestamp           : immediately
 [Smartphone] → [Telemetry Infrastructure] : low battery warning, battery percentage, helmet ID, timestamp           : immediately
-[Telemetry Infrastructure] → [Processing Infrastructure] : low battery warning, helmet ID, timestamp                : immediately
+[Telemetry Infrastructure] → [Hot Storage] : low battery warning, battery percentage, helmet ID, timestamp          : immediately
+[Telemetry Infrastructure] → [SQS Control Queue] : low battery warning pointer, helmet ID, timestamp               : immediately
+[Processing Infrastructure] → [SQS Control Queue] : read low battery warning pointer                               : event-driven
 [Processing Infrastructure] → [Processing Infrastructure] : mark helmet as low battery, helmet ID, timestamp        : immediately
 [Helmet HUD] → [Rider]                    : "Low battery — system shutdown at 5%"                                   : immediately
 [Smartphone App] → [Rider]                : "Helmet battery low — system shutdown at 5%"                            : immediately
@@ -900,7 +918,10 @@
 [Helmet] → [Helmet]                       : battery at 5% threshold detected                                        : on threshold breach
 [Helmet] → [Smartphone]                   : shutdown message, last telemetry payload, battery percentage, helmet ID, timestamp : immediately
 [Smartphone] → [Telemetry Infrastructure] : shutdown message, last telemetry payload, battery percentage, helmet ID, timestamp : immediately
-[Telemetry Infrastructure] → [Processing Infrastructure] : shutdown message, last telemetry payload, helmet ID, timestamp : immediately
+[Telemetry Infrastructure] → [Hot Storage] : shutdown message, last telemetry payload, battery percentage, helmet ID, timestamp : immediately
+[Telemetry Infrastructure] → [SQS Control Queue] : shutdown message pointer, helmet ID, timestamp                   : immediately
+[Processing Infrastructure] → [SQS Control Queue] : read shutdown message pointer                                   : event-driven
+[Processing Infrastructure] → [Hot Storage] : query last telemetry for helmet ID                                    : immediately on reading pointer from SQS
 [Helmet] → [Helmet]                       : start 15-second acknowledgement timer                                   : immediately after shutdown message sent
 ```
 
@@ -1007,7 +1028,10 @@
 ```
 [Smartphone] → [Smartphone Local Storage] : retain buffered telemetry, shutdown message, helmet ID, timestamp       : immediately on helmet power down
 [Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : buffered telemetry, shutdown message, helmet ID, timestamp range : on connectivity restore
-[Telemetry Infrastructure] → [Processing Infrastructure] : buffered telemetry, shutdown message, helmet ID, timestamp range : immediately
+[Telemetry Infrastructure] → [Hot Storage] : buffered telemetry, shutdown message, helmet ID, timestamp range       : immediately
+[Telemetry Infrastructure] → [SQS Control Queue] : shutdown message pointer, helmet ID, timestamp                   : immediately
+[Processing Infrastructure] → [SQS Control Queue] : read shutdown message pointer                                   : event-driven
+[Processing Infrastructure] → [Hot Storage] : query telemetry history for helmet ID                                 : immediately on reading pointer from SQS
 ```
 
 > Processing Infrastructure applies same resolution logic as Flow 6 Sad Path scenarios.
@@ -1141,19 +1165,19 @@
 >
 > | # | Sub-flow | Status |
 > |---|---|---|
-> | 9A | Monitoring Stack and Detection
-> | 9B | Sensor Failure (device layer)
-> | 9C | Helmet Telemetry to Smartphone Failure (device layer) 
-> | 9D | Smartphone Telemetry to Cloud Failure (device layer) 
-> | 9E | IoT Core / MQTT Broker Failure (cloud layer) 
-> | 9F | Telemetry Infrastructure Failure (cloud layer) 
-> | 9G | Processing Infrastructure Failure (cloud layer) 
-> | 9H | Alerting Infrastructure Failure (cloud layer) 
-> | 9I | Database Failure (cloud layer)
-> | 9J | Parameter Store Unavailability (config layer) 
-> | 9K | Bad Firmware Update (config layer) 
-> | 9L | Bad Infrastructure Deploy — CI/CD Pipeline (config layer) 
-> | 9M | Monitoring Stack Failure (observability layer)
+> | 9A | Monitoring Stack and Detection | ✅ Complete |
+> | 9B | Sensor Failure (device layer) | ✅ Complete |
+> | 9C | Helmet Telemetry to Smartphone Failure (device layer) | ✅ Complete |
+> | 9D | Smartphone Telemetry to Cloud Failure (device layer) | ✅ Complete |
+> | 9E | IoT Core / MQTT Broker Failure (cloud layer) | ✅ Complete |
+> | 9F | Telemetry Infrastructure Failure (cloud layer) | ⬜ Pending |
+> | 9G | Processing Infrastructure Failure (cloud layer) | ⬜ Pending |
+> | 9H | Alerting Infrastructure Failure (cloud layer) | ⬜ Pending |
+> | 9I | Database Failure (cloud layer) | ⬜ Pending |
+> | 9J | Parameter Store Unavailability (config layer) | ⬜ Pending |
+> | 9K | Bad Firmware Update (config layer) | ⬜ Pending |
+> | 9L | Bad Infrastructure Deploy — CI/CD Pipeline (config layer) | ⬜ Pending |
+> | 9M | Monitoring Stack Failure (observability layer) | ⬜ Pending |
 
 ---
 
@@ -1178,6 +1202,8 @@
 [Prometheus] → [Database — Hot Storage]            : /health endpoint scrape                                        : every 60 seconds
 [Prometheus] → [Database — Cold Storage]           : /health endpoint scrape                                        : every 60 seconds
 [Prometheus] → [CI/CD Pipeline]                    : /health endpoint scrape                                        : every 60 seconds
+[Prometheus] → [SQS Crash Queue]                   : queue depth, message age, dead letter queue count              : every 60 seconds
+[Prometheus] → [SQS Control Queue]                 : queue depth, message age, dead letter queue count              : every 60 seconds
 [CloudWatch] → [IoT Core]                          : health and performance metrics scrape                          : every 30 seconds
 ```
 
@@ -1338,7 +1364,7 @@
 ---
 
 ## Flow 9B — Sensor Failure (Device Layer)
- 
+
 > **Precondition:** Helmet is active mid-ride. One or more helmet sensors begin producing garbage telemetry — values that are out of range, corrupted, or generating false crash flags at the edge processing layer.
 >
 > **Single helmet sensor failure** — Processing Infrastructure's false positive validation logic catches garbage telemetry from an individual helmet and generates a maintenance flag. This is covered in Flow 1 Branch B and Flow 3 Branch A. No new infrastructure behaviour is introduced for a single helmet.
@@ -1346,36 +1372,36 @@
 > **Fleet-wide sensor failure** — A firmware bug causes many helmets simultaneously to produce false crash flags. This crosses the mass alert threshold in Flow 9A and enters the decision tree defined there. Flow 9B documents the full resolution path from that point onward.
 >
 > **Reference:** Single helmet sensor failure → see Flow 1 Branch B (maintenance flag) and Flow 3 Branch A (false positive handling). Fleet-wide sensor failure enters via Flow 9A Branch B1 (firmware version correlated mass alert).
- 
+
 ---
- 
+
 ### Rider Notification During Hold Period
- 
+
 > Triggered when Processing Infrastructure holds alerts and Fleet Manager is paged. Riders mid-ride are notified immediately on both devices.
- 
+
 ```
 [Processing Infrastructure] → [Alerting Infrastructure]   : hold all dispersed alerts, fleet-wide issue detected, firmware version, timestamp          : immediately on hold initiated
 [Alerting Infrastructure] → [Helmet HUD]                  : "Fleet-wide issue detected — alert systems under maintenance"                               : immediately to all affected helmets
 [Alerting Infrastructure] → [Smartphone App]              : "Fleet-wide issue detected — alert systems under maintenance, please ride with caution"     : immediately to all affected smartphones
 ```
- 
+
 > Alert systems are in maintenance mode for all affected helmets during the hold window. No alerts fire during this period.
- 
+
 ---
- 
+
 ### Fleet Manager Investigation and Resolution
- 
+
 ```
 [Fleet Manager] → [Fleet Management System]               : investigate mass alert spike, firmware version, helmet IDs, timestamp                       : on receiving PagerDuty page
 [Fleet Management System] → [Fleet Manager]               : fleet status, firmware version distribution, affected helmet count, alert event log         : immediately
 ```
- 
+
 ---
- 
+
 ### Outcome 1 — Firmware Bug Confirmed, Rollback Initiated
- 
+
 > Fleet Manager confirms the firmware version is the cause. Rollback is initiated via the firmware pipeline — see Flow 10.
- 
+
 ```
 [Fleet Manager] → [Fleet Management System]               : confirm firmware bug, initiate rollback, firmware version, timestamp                        : on investigation complete
 [Fleet Management System] → [Processing Infrastructure]   : firmware bug confirmed, discard all held alerts for affected firmware version, timestamp     : immediately
@@ -1384,53 +1410,53 @@
 [Alerting Infrastructure] → [Helmet HUD]                  : "Fleet-wide issue resolved — alert systems restored"                                        : immediately to all affected helmets
 [Alerting Infrastructure] → [Smartphone App]              : "Fleet-wide issue resolved — alert systems restored"                                        : immediately to all affected smartphones
 ```
- 
+
 > No alerts fired. All held alert events written to cold storage with firmware bug remark. Riders informed systems are restored.
- 
+
 ---
- 
+
 ### Outcome 2 — No Firmware Bug Found, Held Alerts May Be Genuine
- 
+
 > Fleet Manager investigation finds no firmware cause. Held alerts are returned to Processing Infrastructure for individual re-validation.
- 
+
 ```
 [Fleet Manager] → [Fleet Management System]               : no firmware bug found, release held alerts for re-validation, timestamp                     : on investigation complete
 [Fleet Management System] → [Processing Infrastructure]   : release held alerts, helmet IDs, held alert timestamps                                      : immediately
 [Processing Infrastructure] → [Processing Infrastructure] : re-validate each held alert individually against available telemetry                        : immediately on release
 ```
- 
+
 #### Sub-branch — Held Alert Under 24 Hours (Hot Storage Data Available)
- 
+
 ```
 [Processing Infrastructure] → [Hot Storage]               : query recent telemetry for helmet ID                                                        : on each held alert re-validation
 [Hot Storage] → [Processing Infrastructure]               : telemetry history                                                                           : immediately
 [Processing Infrastructure] → [Processing Infrastructure] : validate crash event against telemetry history                                              : immediately
 ```
- 
+
 ##### Validated as False Positive
- 
+
 ```
 [Processing Infrastructure] → [Cold Storage]              : false positive log entry, helmet ID, crash timestamp, reason, held alert context            : immediately
 ```
- 
+
 > No alert fired.
- 
+
 ##### Validated as Genuine Crash
- 
+
 ```
 [Processing Infrastructure] → [Alerting Infrastructure]   : crash confirmed, helmet ID, crash timestamp, incident location                              : immediately
 [Alerting Infrastructure] → [Helmet HUD]                  : 30-second countdown — "Crash detected — cancel to abort alert"                             : immediately
 [Alerting Infrastructure] → [Smartphone App]              : 30-second countdown — "Crash detected — cancel to abort alert"                             : immediately
 ```
- 
+
 > Full Flow 3 alert countdown runs unmodified from this point. See Flow 3 — Alert Countdown.
- 
+
 ---
- 
+
 #### Sub-branch — Held Alert Over 24 Hours (No Hot Storage Data Available)
- 
+
 > Hot storage retention window has expired. Processing Infrastructure has no telemetry to validate against. Decision goes to rider — same mechanic as Flow 4 Retrospective Alert.
- 
+
 ```
 [Processing Infrastructure] → [Hot Storage]               : query recent telemetry for helmet ID                                                        : on re-validation attempt
 [Hot Storage] → [Processing Infrastructure]               : no data found — retention window expired                                                    : immediately
@@ -1438,9 +1464,9 @@
 [Alerting Infrastructure] → [Smartphone App]              : persistent notification — "A crash alert from [timestamp] could not be verified — do you want to alert emergency services?" : immediately
 [Alerting Infrastructure] → [Helmet HUD]                  : persistent notification — "Crash alert from [timestamp] unverified — see smartphone app"    : immediately if helmet still online
 ```
- 
+
 ##### Rider Confirms
- 
+
 ```
 [Rider] → [Smartphone App]                                : confirm                                                                                     : on rider action
 [Smartphone App] → [Alerting Infrastructure]              : confirm signal, helmet ID, timestamp                                                        : immediately
@@ -1448,26 +1474,27 @@
 [Alerting Infrastructure] → [Emergency Services]          : crash alert, incident location from held alert, current location, incident timestamp, next of kin contact : immediately, independent of Next of Kin channel
 [Alerting Infrastructure] → [Cold Storage]                : incident record, helmet ID, crash timestamp, incident location, confirmed by rider after hold expiry, delivery outcome per channel : on resolution
 ```
- 
+
 ##### Rider Cancels
- 
+
 ```
 [Rider] → [Smartphone App]                                : cancel                                                                                      : on rider action
 [Smartphone App] → [Alerting Infrastructure]              : cancel signal, helmet ID, timestamp                                                         : immediately
 [Alerting Infrastructure] → [Cold Storage]                : cancelled alert record, helmet ID, crash timestamp, cancelled by rider after hold expiry     : immediately
 ```
- 
+
 > No alert fired.
- 
+
 ##### Rider Unreachable
- 
+
 ```
 [Alerting Infrastructure] → [Alerting Infrastructure]     : no rider response, smartphone unreachable                                                   : on notification delivery failure
 [Alerting Infrastructure] → [Cold Storage]                : unresolved alert record, helmet ID, crash timestamp, incident location, rider unreachable, no alert fired : immediately
 ```
- 
+
 > No alert fired. Incident logged to cold storage for Fleet Manager review.
 
+---
 
 ## Flow 9C — Helmet Telemetry to Smartphone Failure (Device Layer)
 
@@ -1549,8 +1576,11 @@
 > Backlog flush mechanics identical to Flow 2 Sad Path 2A. See Flow 2 Sad Path 2A — Backlog Flush via Catch-Up Channel.
 
 ```
-[Telemetry Infrastructure] → [Processing Infrastructure] : synced buffered data                                     : on each acknowledged chunk
-[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately on each chunk received
+[Telemetry Infrastructure] → [Hot Storage]               : synced buffered data, helmet ID, timestamp range         : on each acknowledged chunk
+[Telemetry Infrastructure] → [Telemetry Infrastructure]  : inspect synced chunk for crash flag                      : immediately
+[Telemetry Infrastructure] → [SQS Crash Queue]           : crash event pointer, helmet ID, timestamp                : if crash flag found in chunk
+[Processing Infrastructure] → [SQS Crash Queue]          : read crash event pointer                                  : event-driven
+[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately on reading pointer from SQS
 ```
 
 ---
@@ -1564,17 +1594,14 @@
 ### Branch D — Crash Flag Detected in Synced Data
 
 > Retrospective alert mechanic runs. Identical to Flow 4 Retrospective Alert. See Flow 4 — Retrospective Alert.
- 
- ## Flow 9D — Smartphone Telemetry to Cloud Failure (Device Layer)
 
-> **Architecture note:** All prior flows that show `[Smartphone] → [Telemetry
-Infrastructure]` represent the logical data path. The actual transport layer is
-`Smartphone → AWS IoT Core (MQTT) → IoT Rules Engine → Telemetry Infrastructure`.
-IoT Core sits implicitly in every one of those arrows. Flow 9E covers IoT Core
-failure specifically.
+---
 
-> **Precondition:** Rider is mid-ride. Bluetooth between Helmet and Smartphone is
-active. Smartphone is unable to publish telemetry to the cloud.
+## Flow 9D — Smartphone Telemetry to Cloud Failure (Device Layer)
+
+> **Architecture note:** All prior flows that show `[Smartphone] → [Telemetry Infrastructure]` represent the logical data path. The actual transport layer is `Smartphone → AWS IoT Core (MQTT) → IoT Rules Engine → Telemetry Infrastructure`. IoT Core sits implicitly in every one of those arrows. Flow 9E covers IoT Core failure specifically.
+
+> **Precondition:** Rider is mid-ride. Bluetooth between Helmet and Smartphone is active. Smartphone is unable to publish telemetry to the cloud.
 
 > **Scenarios covered:**
 >
@@ -1586,31 +1613,22 @@ active. Smartphone is unable to publish telemetry to the cloud.
 > | Smartphone device failure | Out of scope — cloud detects silence, Flow 8 runs |
 > | Smartphone app failure | Out of scope — cloud detects silence, Flow 8 runs |
 
-> **No new infrastructure behaviour is introduced in this flow.** All failure modes
-either reference existing flows or fall outside the infrastructure scope of this
-project.
+> **No new infrastructure behaviour is introduced in this flow.** All failure modes either reference existing flows or fall outside the infrastructure scope of this project.
 
+---
 
 ## Flow 9E — IoT Core / MQTT Broker Failure (Cloud Layer)
 
-> **Precondition:** Rider is mid-ride. Bluetooth between Helmet and Smartphone is
-active. IoT Core becomes unreachable — either due to internet loss on the smartphone
-side or IoT Core itself going down.
+> **Precondition:** Rider is mid-ride. Bluetooth between Helmet and Smartphone is active. IoT Core becomes unreachable — either due to internet loss on the smartphone side or IoT Core itself going down.
 >
-> **Known limitation:** IoT Core is the MQTT broker responsible for firing LWT
-messages on unexpected helmet dropout. If IoT Core is down, LWT cannot fire. Any
-crash that occurs during an IoT Core outage will not trigger an LWT-based alert.
-The crash event will be captured in the helmet and smartphone buffers and processed
-retrospectively when IoT Core recovers — same mechanic as Flow 4 Retrospective Alert.
+> **Known limitation:** IoT Core is the MQTT broker responsible for firing LWT messages on unexpected helmet dropout. If IoT Core is down, LWT cannot fire. Any crash that occurs during an IoT Core outage will not trigger an LWT-based alert. The crash event will be captured in the helmet and smartphone buffers and processed retrospectively when IoT Core recovers — same mechanic as Flow 4 Retrospective Alert.
 >
-> **Data collection during outage:** Helmet continues sensing and sending to
-smartphone every second. Smartphone continues buffering locally. Collection never
-pauses — only upload to cloud is interrupted. Catch-up pipeline flushes backlog
-on restore.
+> **Data collection during outage:** Helmet continues sensing and sending to smartphone every second. Smartphone continues buffering locally. Collection never pauses — only upload to cloud is interrupted. Catch-up pipeline flushes backlog on restore.
 
 ---
 
 ### Smartphone Detects IoT Core Unreachable
+
 ```
 [Smartphone] → [Smartphone]               : attempt to reach IoT Core endpoint                                      : on connectivity check
 [Smartphone] → [Smartphone]               : IoT Core endpoint unreachable                                           : on failed connection attempt
@@ -1619,30 +1637,31 @@ on restore.
 ---
 
 ### Branch A — Internet Loss (Smartphone Cannot Reach Anything)
+
 ```
 [Smartphone] → [Smartphone]               : internet unreachable, not an IoT Core specific failure                  : on connectivity check
 [Smartphone App] → [Rider]                : "Network failure — telemetry and alert systems not operational"          : immediately
 [Helmet HUD] → [Rider]                    : "Network failure — telemetry and alert systems not operational"          : immediately
 ```
 
-> Smartphone buffers locally. Helmet continues sensing and buffering. See Flow 2
-Sad Path 2A for full buffering and catch-up pipeline behaviour.
+> Smartphone buffers locally. Helmet continues sensing and buffering. See Flow 2 Sad Path 2A for full buffering and catch-up pipeline behaviour.
 
 ---
 
 ### Branch B — IoT Core Down (Smartphone Has Internet, IoT Core Endpoint Unreachable)
+
 ```
 [Smartphone] → [Smartphone]               : internet reachable, IoT Core endpoint unreachable — IoT Core down       : on connectivity check
 [Smartphone App] → [Rider]                : "Alert system failure — this is not a device issue, please ride with caution" : immediately
 [Helmet HUD] → [Rider]                    : "Alert system failure — this is not a device issue, please ride with caution" : immediately
 ```
 
-> Smartphone buffers locally. Helmet continues sensing and buffering. See Flow 2
-Sad Path 2A for full buffering and catch-up pipeline behaviour.
+> Smartphone buffers locally. Helmet continues sensing and buffering. See Flow 2 Sad Path 2A for full buffering and catch-up pipeline behaviour.
 
 ---
 
 ### Cloud Side — Monitoring Detects IoT Core Failure
+
 ```
 [CloudWatch] → [IoT Core]                          : health and performance metrics scrape                          : every 30 seconds
 [IoT Core] → [CloudWatch]                          : no response                                                    : —
@@ -1656,6 +1675,7 @@ Sad Path 2A for full buffering and catch-up pipeline behaviour.
 ---
 
 ### On IoT Core Recovery
+
 ```
 [Smartphone] → [Smartphone]               : IoT Core endpoint reachable                                             : on periodic connectivity check
 [Smartphone] → [AWS IoT Core]             : reconnect, re-register LWT, helmet ID, timestamp                        : immediately on IoT Core reachable
@@ -1664,18 +1684,20 @@ Sad Path 2A for full buffering and catch-up pipeline behaviour.
 [Helmet HUD] → [Rider]                    : "Alert system restored — telemetry operational"                         : immediately
 ```
 
-> LWT re-registration happens automatically as part of MQTT reconnection. No special
-infrastructure configuration required.
+> LWT re-registration happens automatically as part of MQTT reconnection. No special infrastructure configuration required.
 
 ---
 
 ### Catch-Up Sync on Recovery
 
-> Backlog flush mechanics identical to Flow 2 Sad Path 2A. See Flow 2 Sad Path 2A
-— Backlog Flush via Catch-Up Channel.
+> Backlog flush mechanics identical to Flow 2 Sad Path 2A. See Flow 2 Sad Path 2A — Backlog Flush via Catch-Up Channel.
+
 ```
-[Telemetry Infrastructure] → [Processing Infrastructure] : synced buffered data                                     : on each acknowledged chunk
-[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately on each chunk received
+[Telemetry Infrastructure] → [Hot Storage]               : synced buffered data, helmet ID, timestamp range         : on each acknowledged chunk
+[Telemetry Infrastructure] → [Telemetry Infrastructure]  : inspect synced chunk for crash flag                      : immediately
+[Telemetry Infrastructure] → [SQS Crash Queue]           : crash event pointer, helmet ID, timestamp                : if crash flag found in chunk
+[Processing Infrastructure] → [SQS Crash Queue]          : read crash event pointer                                  : event-driven
+[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately on reading pointer from SQS
 ```
 
 ---
@@ -1688,5 +1710,4 @@ infrastructure configuration required.
 
 ### Branch D — Crash Flag Detected in Synced Data
 
-> Retrospective alert mechanic runs. Identical to Flow 4 Retrospective Alert.
-See Flow 4 — Retrospective Alert.
+> Retrospective alert mechanic runs. Identical to Flow 4 Retrospective Alert. See Flow 4 — Retrospective Alert.
