@@ -1047,8 +1047,9 @@
 ### LWT Fires
 
 ```
-[AWS IoT Core] → [Processing Infrastructure] : LWT message, helmet ID, last known timestamp                        : on unexpected disconnection detected
-[Processing Infrastructure] → [Processing Infrastructure] : start 5-second grace period timer, helmet ID           : immediately on LWT received
+[AWS IoT Core] → [SQS LWT Queue]             : LWT message, helmet ID, last known timestamp        : on unexpected disconnection detected, via IoT Core rules engine
+[Processing Infrastructure] → [SQS LWT Queue] : read LWT message, helmet ID, last known timestamp   : event-driven
+[Processing Infrastructure] → [Processing Infrastructure] : start 5-second grace period timer, helmet ID           : immediately on LWT read
 ```
 
 #### Sub-branch — Device Reconnects Within Grace Period
@@ -1818,3 +1819,182 @@
 ### Branch D — Crash Flag Detected in Synced Data
 
 > Retrospective alert mechanic runs. Identical to Flow 4 Retrospective Alert. See Flow 4 — Retrospective Alert.
+
+## Flow 9G — Processing Infrastructure Failure (Cloud Layer)
+
+> **Precondition:** Rider is mid-ride. Bluetooth between Helmet and Smartphone is active. Smartphone is connected to AWS IoT Core. Telemetry Infrastructure is up. Processing Infrastructure becomes unavailable.
+>
+> **Known limitation:** Processing Infrastructure is the only service that validates crash events and triggers alerts. With it down, no alerts can fire regardless of what crash events are detected during the outage. All crash event pointers, control message pointers, and LWT messages accumulate in their respective SQS queues unread. All three queues are configured with a 14-day message retention period — independent of the Hot Storage 24-hour retention window. Hot Storage telemetry expires at 24 hours; SQS retains event pointers for 14 days. On recovery, Processing Infrastructure drains all three queues: events from within 24 hours of the crash are processed via Branch A (full telemetry validation); events older than 24 hours are processed via Branch B (retrospective alert to rider — no Hot Storage data available). Events still unprocessed after 14 days expire from SQS with no cold storage record — a 14-day Processing Infrastructure outage is a catastrophic failure beyond the scope of this design. DLQ on each queue catches messages that fail to process after recovery (bug/error scenario during drain) and is not used for outage buffering.
+>
+> **Telemetry collection during outage:** The telemetry pipeline — Helmet → Smartphone → IoT Core → Telemetry Infrastructure → Hot Storage — has no dependency on Processing Infrastructure. Collection and Hot Storage writes continue normally throughout the outage. Crash event pointers continue to be written to SQS Crash Queue by Telemetry Infrastructure on crash flag detection. LWT messages from IoT Core continue to be written to SQS LWT Queue. They simply accumulate unread.
+
+---
+
+### Monitoring Stack Detects Processing Infrastructure Failure
+```
+[Prometheus] → [Processing Infrastructure]         : /health endpoint scrape                                        : every 60 seconds
+[Processing Infrastructure] → [Prometheus]         : no response                                                    : —
+[Prometheus] → [Alertmanager]                      : alert fired, Processing Infrastructure unreachable, timestamp  : on health check failure threshold crossed
+[Alertmanager] → [PagerDuty]                       : Processing Infrastructure down, timestamp                      : immediately
+[PagerDuty] → [Infrastructure Engineer]            : page — Processing Infrastructure down, timestamp               : immediately via SMS and call
+```
+
+> See Flow 9A — Threshold Breach Detection for full monitoring chain.
+
+---
+
+### Rider Notification
+```
+[Monitoring Infrastructure] → [AWS IoT Core]       : publish infra down status, helmet ID, timestamp               : once per active helmet, on failure confirmed
+[AWS IoT Core] → [Smartphone]                      : infra down status message                                      : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                         : "Alert system failure — this is not a device issue, please ride with caution" : immediately
+[Smartphone] → [Helmet HUD]                        : infra down status, helmet ID, timestamp                        : immediately via Bluetooth
+[Helmet HUD] → [Rider]                             : "Alert system failure — this is not a device issue, please ride with caution" : immediately
+```
+
+---
+
+### Device and Telemetry Behaviour During Outage
+```
+[Helmet Sensors] → [Helmet]               : accelerometer, speed, edge result, helmet ID, timestamp                 : every 1 second
+[Helmet] → [Smartphone]                   : telemetry payload, helmet ID, timestamp                                 : every 1 second
+[Smartphone] → [AWS IoT Core]             : telemetry payload, helmet ID, timestamp                                 : immediately via helmet/{helmet_id}/telemetry topic
+[AWS IoT Core] → [Telemetry Infrastructure] : telemetry payload, helmet ID, timestamp                              : immediately via IoT Core rules engine
+[Telemetry Infrastructure] → [Hot Storage] : batch payload, batch timestamp                                         : on every receive
+[Telemetry Infrastructure] → [Telemetry Infrastructure] : inspect batch for crash flag                              : immediately
+[Telemetry Infrastructure] → [SQS Crash Queue] : crash event pointer, helmet ID, timestamp                         : if crash flag found — pointer accumulates unread
+```
+
+> Telemetry collection and Hot Storage writes continue normally. SQS Crash Queue and SQS Control Queue accumulate unread pointers. No alerts can fire during this period.
+
+---
+
+### Control Messages During Outage
+
+> Low battery warnings and shutdown messages are forwarded by Telemetry Infrastructure to SQS Control Queue as normal. Processing Infrastructure cannot read them. No ack is sent back for shutdown messages.
+```
+[Telemetry Infrastructure] → [SQS Control Queue]  : control message pointer, helmet ID, timestamp                  : on receiving low battery warning or shutdown message — pointer accumulates unread
+```
+
+#### Shutdown During Outage — Helmet Behaviour
+```
+[Helmet] → [Helmet]                       : start acknowledgement timer on shutdown message sent                    : immediately after shutdown message forwarded to smartphone
+[Helmet] → [Helmet]                       : no acknowledgement received within timer window                         : on timer expiry
+[Helmet] → [Helmet]                       : power down, retain buffer storage                                       : on timer expiry
+```
+
+> Smartphone MQTT session remains active throughout — LWT does not fire. Cloud state for the helmet is ambiguous until Processing Infrastructure recovers and drains the SQS queues. No false alarm is triggered. Rider is already aware infra is down from the earlier status notification — no additional notification sent.
+
+---
+
+### DLQ Monitoring
+```
+[Prometheus] → [SQS Crash Queue]                   : queue depth, DLQ depth, message age                           : every 60 seconds
+[Prometheus] → [SQS Control Queue]                 : queue depth, DLQ depth, message age                           : every 60 seconds
+[Prometheus] → [SQS LWT Queue]                     : queue depth, DLQ depth, message age                           : every 60 seconds
+[Prometheus] → [Alertmanager]                      : alert fired, DLQ depth non-zero, queue name, timestamp        : on DLQ messages detected
+[Alertmanager] → [PagerDuty]                       : unprocessed messages in DLQ, queue name, message count, timestamp : immediately
+[PagerDuty] → [Infrastructure Engineer]            : page — failed message processing detected in DLQ, investigate Processing Infrastructure : immediately via SMS and call
+```
+
+> DLQ messages indicate a processing failure (bug or error) that occurred during recovery drain — the message was received by Processing Infrastructure but failed to process after maxReceiveCount attempts. This is a different scenario from the outage itself, which is handled by the 14-day SQS retention period.
+
+---
+
+### On Processing Infrastructure Recovery
+```
+[Prometheus] → [Processing Infrastructure]         : /health endpoint scrape                                        : every 60 seconds
+[Processing Infrastructure] → [Prometheus]         : health check passed                                            : on recovery
+[Prometheus] → [Alertmanager]                      : alert resolved, Processing Infrastructure restored, timestamp  : immediately
+[Alertmanager] → [PagerDuty]                       : Processing Infrastructure restored, timestamp                  : immediately
+[PagerDuty] → [Infrastructure Engineer]            : Processing Infrastructure restored, timestamp                  : immediately
+[Monitoring Infrastructure] → [AWS IoT Core]       : publish infra restored status, helmet ID, timestamp           : once per active helmet, on recovery confirmed
+[AWS IoT Core] → [Smartphone]                      : infra restored status message                                  : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                         : "Alert system restored — telemetry operational"               : immediately
+[Smartphone] → [Helmet HUD]                        : infra restored status, helmet ID, timestamp                   : immediately via Bluetooth
+[Helmet HUD] → [Rider]                             : "Alert system restored — telemetry operational"               : immediately
+```
+
+---
+
+### Queue Drain on Recovery
+
+#### Control Queue — Processed First
+```
+[Processing Infrastructure] → [SQS Control Queue] : read all held control message pointers                     : immediately on recovery
+[Processing Infrastructure] → [Processing Infrastructure] : process control messages in order per helmet ID         : immediately
+[Processing Infrastructure] → [Processing Infrastructure] : apply state updates — mark helmet as low battery or offline as appropriate : on each message processed
+```
+
+> Control messages are state updates only. No cold storage writes, no alerts, no acks sent for already-timed-out helmets. Processed in order — any low battery warning for a helmet that also has a shutdown message is superseded immediately by the shutdown message with no harmful consequence.
+
+---
+
+#### LWT Queue — Processed Second
+```
+[Processing Infrastructure] → [SQS LWT Queue]    : read all held LWT messages                                   : after Control Queue drained
+[Processing Infrastructure] → [Processing Infrastructure] : for each LWT — check if helmet already marked as gracefully offline from Control Queue drain : immediately
+```
+
+##### Sub-branch — Helmet Already Marked Gracefully Offline
+```
+[Processing Infrastructure] → [Processing Infrastructure] : discard LWT — graceful shutdown confirmed, LWT superseded : immediately
+```
+
+> No alert triggered. The LWT was fired by IoT Core before the graceful shutdown message was processed. Control Queue drain has already resolved the helmet state correctly.
+
+##### Sub-branch — LWT Within 24 Hours of Occurrence (Hot Storage Data Available)
+```
+[Processing Infrastructure] → [Hot Storage]      : query last telemetry for helmet ID                            : immediately
+[Hot Storage] → [Processing Infrastructure]      : last telemetry payload                                        : immediately
+[Processing Infrastructure] → [Processing Infrastructure] : analyse last telemetry for crash flag, skip 5-second grace period — outage duration well exceeds it : immediately
+```
+
+> Proceeds as Flow 8 Case 1 (no crash flag — log unexpected dropout, no alert) or Case 2 (crash flag — validate and run retrospective alert mechanic). See Flow 8 for full branch detail.
+
+##### Sub-branch — LWT Beyond 24 Hours of Occurrence (No Hot Storage Data Available)
+```
+[Processing Infrastructure] → [Hot Storage]      : query last telemetry for helmet ID                            : immediately
+[Hot Storage] → [Processing Infrastructure]      : no data found — retention window expired                     : immediately
+[Processing Infrastructure] → [Alerting Infrastructure] : cannot validate — telemetry expired, escalate to rider, helmet ID, last known timestamp from LWT message : immediately
+```
+
+> Retrospective alert mechanic runs. Identical to Flow 4 Retrospective Alert. See Flow 4 — Retrospective Alert.
+> Rider is presented with confirm or cancel. If rider is unreachable — cold storage log, no alert fired.
+
+---
+
+#### Crash Queue — Processed Last
+```
+[Processing Infrastructure] → [SQS Crash Queue]      : read all held crash event pointers                         : after LWT Queue drained
+[Processing Infrastructure] → [Hot Storage]           : query telemetry history for helmet ID                      : on each crash event pointer read
+```
+
+---
+
+#### Branch A — Within 24 Hours (Hot Storage Data Available)
+```
+[Hot Storage] → [Processing Infrastructure]           : recent telemetry history                                    : immediately
+[Processing Infrastructure] → [Processing Infrastructure] : validate crash event against telemetry history          : immediately
+```
+
+##### Validated as False Positive
+```
+[Processing Infrastructure] → [Cold Storage]          : false positive log entry, helmet ID, crash timestamp, reason, processing delayed due to infra outage : immediately
+```
+
+> No alert fired.
+
+##### Validated as Genuine Crash
+
+> Retrospective alert mechanic runs. Identical to Flow 4 Retrospective Alert. See Flow 4 — Retrospective Alert.
+
+---
+
+#### Branch B — Beyond 24 Hours (No Hot Storage Data Available)
+```
+[Hot Storage] → [Processing Infrastructure]           : no data found — retention window expired                    : immediately
+[Processing Infrastructure] → [Alerting Infrastructure] : cannot validate — telemetry expired, escalate to rider, helmet ID, crash timestamp, incident location from crash pointer : immediately
+```
+
+> Retrospective alert mechanic runs. Identical to Flow 4 Retrospective Alert. See Flow 4 — Retrospective Alert. 

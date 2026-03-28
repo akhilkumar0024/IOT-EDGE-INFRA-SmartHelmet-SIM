@@ -332,3 +332,12 @@ that is available in the hotstorage and fire the alerts normally as is  in the f
 
 for the scenarios where the bugs are fixed above 24hrs we have to fall back to the flow 4 of retrospectively firing alets where the Rider decies if to fire an alert or not
 by default the crash event is only stored in the cloud storage
+
+Flow 9G — Processing Infrastructure Failure
+
+The processing infra itself goes down 
+the processing infra is responsible for the processing of the crash events that arrive from the telemetry infra and looking for a crash event data from the queue and the process the data 
+that arrived prior to the crash event from the hoststorage and take a final call on if its really a crash or a false positive 
+without the processing infra the events in both the crash queue and the control flag queue will pileup and the control flags that come wont be processed either eventually queue will fail
+the monitoring system will have to detect the failure and inform the user about the systems being down unlilke the earlier case where the telemetry is down but the helmets buffer kept collecting data 
+here we will have to stop collecting data until processing infra is back again to restart the telemetry services 
