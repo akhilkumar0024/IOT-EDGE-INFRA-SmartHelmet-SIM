@@ -72,8 +72,8 @@
 [Smartphone] → [Helmet]                   : sync acknowledgement                                                    : immediately
 [Helmet] → [Helmet]                       : clear buffer storage                                                    : on receiving sync acknowledgement
 [Telemetry Infrastructure] → [Telemetry Infrastructure] : inspect buffered data for crash flag                      : immediately
-[Telemetry Infrastructure] → [SQS Crash Queue] : crash event pointer, helmet ID, timestamp                         : if crash flag found
-[Processing Infrastructure] → [SQS Crash Queue] : read crash event pointer                                         : event-driven
+[Telemetry Infrastructure] → [SQS Crash Queue] : crash event data point, helmet ID, timestamp                         : if crash flag found
+[Processing Infrastructure] → [SQS Crash Queue] : read crash event data point                                         : event-driven
 [Processing Infrastructure] → [Hot Storage] : query telemetry history for helmet ID                                 : immediately on crash event received
 [Processing Infrastructure] → [Processing Infrastructure] : scan for alert events in buffered data                  : immediately
 ```
@@ -470,14 +470,14 @@
 [AWS IoT Core] → [Telemetry Infrastructure] : telemetry payload with crash flag, helmet ID, timestamp              : immediately via IoT Core rules engine
 [Telemetry Infrastructure] → [Hot Storage] : telemetry payload with crash flag, helmet ID, timestamp               : immediately
 [Telemetry Infrastructure] → [Telemetry Infrastructure] : inspect batch for crash flag                              : immediately
-[Telemetry Infrastructure] → [SQS Crash Queue] : crash event pointer, helmet ID, timestamp                         : on crash flag detected
-[Processing Infrastructure] → [SQS Crash Queue] : read crash event pointer                                         : event-driven
+[Telemetry Infrastructure] → [SQS Crash Queue] : crash event data point, helmet ID, timestamp                         : on crash flag detected
+[Processing Infrastructure] → [SQS Crash Queue] : read crash event data point                                         : event-driven
 ```
 
 ### Processing Infrastructure Validates Crash Event
 
 ```
-[Processing Infrastructure] → [Hot Storage] : query recent telemetry history for helmet ID                         : immediately on reading crash event pointer from SQS
+[Processing Infrastructure] → [Hot Storage] : query recent telemetry history for helmet ID                         : immediately on reading crash event data point from SQS
 [Hot Storage] → [Processing Infrastructure] : recent telemetry history                                              : immediately
 [Processing Infrastructure] → [Processing Infrastructure] : validate crash event against telemetry history          : immediately
 ```
@@ -506,7 +506,7 @@
 > This block runs every time Alerting Infrastructure reads an event from SQS Alert Queue, across all flows.
 
 ```
-[Alerting Infrastructure] → [SQS Alert Queue]     : read alert event pointer                                        : event-driven
+[Alerting Infrastructure] → [SQS Alert Queue]     : read alert event data point                                        : event-driven
 [Alerting Infrastructure] → [Alerting Infrastructure] : check alert type label on event — false_positive, standard, or retrospective : immediately on read
 ```
 
@@ -681,9 +681,9 @@
 [Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : next 50-second chunk                                 : on receiving acknowledgement of previous chunk
 [Telemetry Infrastructure] → [Hot Storage] : synced buffered data, helmet ID, timestamp range                       : on each acknowledged chunk
 [Telemetry Infrastructure] → [Telemetry Infrastructure] : inspect synced chunk for crash flag                       : immediately
-[Telemetry Infrastructure] → [SQS Crash Queue] : crash event pointer, helmet ID, timestamp                         : if crash flag found in chunk
-[Processing Infrastructure] → [SQS Crash Queue] : read crash event pointer                                         : event-driven
-[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately on reading pointer from SQS
+[Telemetry Infrastructure] → [SQS Crash Queue] : crash event data point, helmet ID, timestamp                         : if crash flag found in chunk
+[Processing Infrastructure] → [SQS Crash Queue] : read crash event data point                                         : event-driven
+[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately on reading data point from SQS
 ```
 
 ---
@@ -691,7 +691,7 @@
 ### Case A — Sync Within 24 Hours (Hot Storage Data Available)
 
 ```
-[Processing Infrastructure] → [Hot Storage] : query recent telemetry for helmet ID                                  : on crash flag detected
+[Processing Infrastructure] → [Hot Storage] : query recent telemetry for helmet ID                                  : immediately on reading data point from SQS
 [Hot Storage] → [Processing Infrastructure] : recent telemetry history                                              : immediately
 [Processing Infrastructure] → [Processing Infrastructure] : validate crash event against telemetry history          : immediately
 ```
@@ -699,10 +699,10 @@
 ##### Sub-branch — Validated as False Positive
 
 ```
-[Processing Infrastructure] → [Cold Storage] : false positive log entry, helmet ID, crash timestamp, reason, synced at : on false positive decision
+[Processing Infrastructure] → [SQS Alert Queue] : false positive confirmed, alert type — false_positive, helmet ID, crash timestamp : on false positive decision
 ```
 
-> No alert sent.
+> Alerting Infrastructure reads the queue, checks the elapsed time against the threshold, and handles the logging/alerting. See Flow 3 — Alerting Infrastructure Alert Type Determination.
 
 ##### Sub-branch — Validated as Genuine Crash
 
@@ -713,7 +713,7 @@
 ### Case B — Sync After 24 Hours (No Hot Storage Data Available)
 
 ```
-[Processing Infrastructure] → [Hot Storage] : query recent telemetry for helmet ID                                  : on crash flag detected
+[Processing Infrastructure] → [Hot Storage] : query recent telemetry for helmet ID                                  : immediately on reading data point from SQS
 [Hot Storage] → [Processing Infrastructure] : no data found                                                         : immediately
 [Processing Infrastructure] → [Processing Infrastructure] : validate crash event against buffered data only, apply lower confidence threshold, lean toward alert : immediately
 ```
@@ -813,8 +813,8 @@
 [Helmet] → [Smartphone]                   : graceful shutdown message, helmet ID, timestamp                         : after remaining telemetry flushed
 [Smartphone] → [Telemetry Infrastructure] : graceful shutdown message, helmet ID, timestamp                         : immediately
 [Telemetry Infrastructure] → [Hot Storage] : graceful shutdown message, helmet ID, timestamp                        : immediately
-[Telemetry Infrastructure] → [SQS Control Queue] : graceful shutdown message pointer, helmet ID, timestamp          : immediately
-[Processing Infrastructure] → [SQS Control Queue] : read graceful shutdown message pointer                          : event-driven
+[Telemetry Infrastructure] → [SQS Control Queue] : graceful shutdown message data point, helmet ID, timestamp          : immediately
+[Processing Infrastructure] → [SQS Control Queue] : read graceful shutdown message data point                          : event-driven
 [Processing Infrastructure] → [Processing Infrastructure] : mark helmet as gracefully offline                       : immediately
 [Processing Infrastructure] → [Telemetry Infrastructure] : shutdown acknowledgement, helmet ID, timestamp           : immediately
 [Telemetry Infrastructure] → [Smartphone] : shutdown acknowledgement, helmet ID, timestamp                          : immediately
@@ -856,9 +856,9 @@
 ```
 [Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : buffered telemetry payloads, graceful shutdown message, helmet ID, timestamp range : on connectivity restore
 [Telemetry Infrastructure] → [Hot Storage]                   : buffered telemetry payloads, helmet ID, timestamp range : immediately
-[Telemetry Infrastructure] → [SQS Control Queue]             : graceful shutdown message pointer, helmet ID, timestamp : immediately
-[Processing Infrastructure] → [SQS Control Queue]            : read graceful shutdown message pointer                  : event-driven
-[Processing Infrastructure] → [Hot Storage]                  : query telemetry history for helmet ID                   : immediately on reading pointer from SQS
+[Telemetry Infrastructure] → [SQS Control Queue]             : graceful shutdown message data point, helmet ID, timestamp : immediately
+[Processing Infrastructure] → [SQS Control Queue]            : read graceful shutdown message data point                  : event-driven
+[Processing Infrastructure] → [Hot Storage]                  : query telemetry history for helmet ID                   : immediately on reading data point from SQS
 [Telemetry Infrastructure] → [Smartphone]                    : acknowledgement                                          : on successful receive
 ```
 
@@ -971,8 +971,8 @@
 [Helmet] → [Smartphone]                   : low battery warning, battery percentage, helmet ID, timestamp           : immediately
 [Smartphone] → [Telemetry Infrastructure] : low battery warning, battery percentage, helmet ID, timestamp           : immediately
 [Telemetry Infrastructure] → [Hot Storage] : low battery warning, battery percentage, helmet ID, timestamp          : immediately
-[Telemetry Infrastructure] → [SQS Control Queue] : low battery warning pointer, helmet ID, timestamp               : immediately
-[Processing Infrastructure] → [SQS Control Queue] : read low battery warning pointer                               : event-driven
+[Telemetry Infrastructure] → [SQS Control Queue] : low battery warning data point, helmet ID, timestamp               : immediately
+[Processing Infrastructure] → [SQS Control Queue] : read low battery warning data point                               : event-driven
 [Processing Infrastructure] → [Processing Infrastructure] : mark helmet as low battery, helmet ID, timestamp        : immediately
 [Helmet HUD] → [Rider]                    : "Low battery — system shutdown at 5%"                                   : immediately
 [Smartphone App] → [Rider]                : "Helmet battery low — system shutdown at 5%"                            : immediately
@@ -994,9 +994,9 @@
 [Helmet] → [Smartphone]                   : shutdown message, last telemetry payload, battery percentage, helmet ID, timestamp : immediately
 [Smartphone] → [Telemetry Infrastructure] : shutdown message, last telemetry payload, battery percentage, helmet ID, timestamp : immediately
 [Telemetry Infrastructure] → [Hot Storage] : shutdown message, last telemetry payload, battery percentage, helmet ID, timestamp : immediately
-[Telemetry Infrastructure] → [SQS Control Queue] : shutdown message pointer, helmet ID, timestamp                   : immediately
-[Processing Infrastructure] → [SQS Control Queue] : read shutdown message pointer                                   : event-driven
-[Processing Infrastructure] → [Hot Storage] : query last telemetry for helmet ID                                    : immediately on reading pointer from SQS
+[Telemetry Infrastructure] → [SQS Control Queue] : shutdown message data point, helmet ID, timestamp                   : immediately
+[Processing Infrastructure] → [SQS Control Queue] : read shutdown message data point                                   : event-driven
+[Processing Infrastructure] → [Hot Storage] : query last telemetry for helmet ID                                    : immediately on reading data point from SQS
 [Helmet] → [Helmet]                       : start 15-second acknowledgement timer                                   : immediately after shutdown message sent
 ```
 
@@ -1110,9 +1110,9 @@
 [Smartphone] → [Smartphone Local Storage] : retain buffered telemetry, shutdown message, helmet ID, timestamp       : immediately on helmet power down
 [Smartphone] → [Telemetry Infrastructure — Catch-up Channel] : buffered telemetry, shutdown message, helmet ID, timestamp range : on connectivity restore
 [Telemetry Infrastructure] → [Hot Storage] : buffered telemetry, shutdown message, helmet ID, timestamp range       : immediately
-[Telemetry Infrastructure] → [SQS Control Queue] : shutdown message pointer, helmet ID, timestamp                   : immediately
-[Processing Infrastructure] → [SQS Control Queue] : read shutdown message pointer                                   : event-driven
-[Processing Infrastructure] → [Hot Storage] : query telemetry history for helmet ID                                 : immediately on reading pointer from SQS
+[Telemetry Infrastructure] → [SQS Control Queue] : shutdown message data point, helmet ID, timestamp                   : immediately
+[Processing Infrastructure] → [SQS Control Queue] : read shutdown message data point                                   : event-driven
+[Processing Infrastructure] → [Hot Storage] : query telemetry history for helmet ID                                 : immediately on reading data point from SQS
 ```
 
 > Processing Infrastructure applies same resolution logic as Flow 6 Sad Path scenarios.
@@ -1258,8 +1258,8 @@
 > | 9D | Smartphone Telemetry to Cloud Failure (device layer) | ✅ Complete |
 > | 9E | IoT Core / MQTT Broker Failure (cloud layer) | ✅ Complete |
 > | 9F | Telemetry Infrastructure Failure (cloud layer) | ✅ Complete |
-> | 9G | Processing Infrastructure Failure (cloud layer) | ⬜ Pending |
-> | 9H | Alerting Infrastructure Failure (cloud layer) | ⬜ Pending |
+> | 9G | Processing Infrastructure Failure (cloud layer) | ✅ Complete |
+> | 9H | Alerting Infrastructure Failure (cloud layer) | ✅ Complete |
 > | 9I | Database Failure (cloud layer) | ⬜ Pending |
 > | 9J | Parameter Store Unavailability (config layer) | ⬜ Pending |
 > | 9K | Bad Firmware Update (config layer) | ⬜ Pending |
@@ -1690,9 +1690,9 @@
 ```
 [Telemetry Infrastructure] → [Hot Storage]               : synced buffered data, helmet ID, timestamp range         : on each acknowledged chunk
 [Telemetry Infrastructure] → [Telemetry Infrastructure]  : inspect synced chunk for crash flag                      : immediately
-[Telemetry Infrastructure] → [SQS Crash Queue]           : crash event pointer, helmet ID, timestamp                : if crash flag found in chunk
-[Processing Infrastructure] → [SQS Crash Queue]          : read crash event pointer                                  : event-driven
-[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately on reading pointer from SQS
+[Telemetry Infrastructure] → [SQS Crash Queue]           : crash event data point, helmet ID, timestamp                : if crash flag found in chunk
+[Processing Infrastructure] → [SQS Crash Queue]          : read crash event data point                                  : event-driven
+[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately on reading data point from SQS
 ```
 
 ---
@@ -1807,9 +1807,9 @@
 ```
 [Telemetry Infrastructure] → [Hot Storage]               : synced buffered data, helmet ID, timestamp range         : on each acknowledged chunk
 [Telemetry Infrastructure] → [Telemetry Infrastructure]  : inspect synced chunk for crash flag                      : immediately
-[Telemetry Infrastructure] → [SQS Crash Queue]           : crash event pointer, helmet ID, timestamp                : if crash flag found in chunk
-[Processing Infrastructure] → [SQS Crash Queue]          : read crash event pointer                                  : event-driven
-[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately on reading pointer from SQS
+[Telemetry Infrastructure] → [SQS Crash Queue]           : crash event data point, helmet ID, timestamp                : if crash flag found in chunk
+[Processing Infrastructure] → [SQS Crash Queue]          : read crash event data point                                  : event-driven
+[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately on reading data point from SQS
 ```
 
 ---
@@ -1830,7 +1830,7 @@
 
 > **Precondition:** Rider is mid-ride. Bluetooth between Helmet and Smartphone is active. Smartphone is connected to AWS IoT Core. Telemetry Infrastructure becomes unavailable. IoT Core is still up — the MQTT session between Smartphone and IoT Core remains intact throughout.
 >
-> **Known limitation:** Real-time crash alerts cannot fire during a Telemetry Infrastructure outage. Telemetry Infrastructure is the service that writes crash pointers to SQS Crash Queue. With it down, no new crash events reach Processing Infrastructure. Any crash that occurs during the outage is captured in the Smartphone buffer and processed retrospectively when Telemetry Infrastructure recovers — same mechanic as Flow 4 Retrospective Alert.
+> **Known limitation:** Real-time crash alerts cannot fire during a Telemetry Infrastructure outage. Telemetry Infrastructure is the service that writes crash data points to SQS Crash Queue. With it down, no new crash events reach Processing Infrastructure. Any crash that occurs during the outage is captured in the Smartphone buffer and processed retrospectively when Telemetry Infrastructure recovers — same mechanic as Flow 4 Retrospective Alert.
 >
 > **New infrastructure:** `helmet/{helmet_id}/infra/status` — cloud-to-device MQTT topic published by Monitoring Infrastructure via IoT Core. Smartphone subscribes at session startup (see Flow 1 — Cloud Connectivity Check). Provisioned in Terraform alongside all other topics. Monitoring Infrastructure IAM policy scoped to publish on `helmet/*/infra/status`.
 
@@ -1881,8 +1881,8 @@
 > Telemetry Infrastructure is the only service that writes to SQS Crash Queue and SQS Control Queue. With it down, no new events enter either queue. Processing Infrastructure is not failed — it continues to drain any crash or control events that were already in the queues before the failure. Once those are consumed, Processing Infrastructure goes idle and waits. Pre-failure crash events in the queue have their corresponding telemetry already written to hot storage and are processed normally.
 
 ```
-[Processing Infrastructure] → [SQS Crash Queue]    : read any pre-failure crash event pointers                      : event-driven, until queue is empty
-[Processing Infrastructure] → [SQS Control Queue]  : read any pre-failure control event pointers                    : event-driven, until queue is empty
+[Processing Infrastructure] → [SQS Crash Queue]    : read any pre-failure crash event data points                      : event-driven, until queue is empty
+[Processing Infrastructure] → [SQS Control Queue]  : read any pre-failure control event data points                    : event-driven, until queue is empty
 ```
 
 > No alert mechanics change for pre-failure crash events. Hot storage data written before the failure is available and valid for validation.
@@ -1913,9 +1913,9 @@
 ```
 [Telemetry Infrastructure] → [Hot Storage]               : synced buffered data, helmet ID, timestamp range         : on each acknowledged chunk
 [Telemetry Infrastructure] → [Telemetry Infrastructure]  : inspect synced chunk for crash flag                      : immediately
-[Telemetry Infrastructure] → [SQS Crash Queue]           : crash event pointer, helmet ID, timestamp                : if crash flag found in chunk
-[Processing Infrastructure] → [SQS Crash Queue]          : read crash event pointer                                  : event-driven
-[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately on reading pointer from SQS
+[Telemetry Infrastructure] → [SQS Crash Queue]           : crash event data point, helmet ID, timestamp                : if crash flag found in chunk
+[Processing Infrastructure] → [SQS Crash Queue]          : read crash event data point                                  : event-driven
+[Processing Infrastructure] → [Processing Infrastructure] : scan for crash flag in synced data                      : immediately on reading data point from SQS
 ```
 
 ---
@@ -1934,9 +1934,9 @@
 
 > **Precondition:** Rider is mid-ride. Bluetooth between Helmet and Smartphone is active. Smartphone is connected to AWS IoT Core. Telemetry Infrastructure is up. Processing Infrastructure becomes unavailable.
 >
-> **Known limitation:** Processing Infrastructure is the only service that validates crash events and triggers alerts. With it down, no alerts can fire regardless of what crash events are detected during the outage. All crash event pointers, control message pointers, and LWT messages accumulate in their respective SQS queues unread. All three queues are configured with a 14-day message retention period — independent of the Hot Storage 24-hour retention window. Hot Storage telemetry expires at 24 hours; SQS retains event pointers for 14 days. On recovery, Processing Infrastructure drains all three queues: events from within 24 hours of the crash are processed via Branch A (full telemetry validation); events older than 24 hours are processed via Branch B (retrospective alert to rider — no Hot Storage data available). Events still unprocessed after 14 days expire from SQS with no cold storage record — a 14-day Processing Infrastructure outage is a catastrophic failure beyond the scope of this design. DLQ on each queue catches messages that fail to process after recovery (bug/error scenario during drain) and is not used for outage buffering.
+> **Known limitation:** Processing Infrastructure is the only service that validates crash events and triggers alerts. With it down, no alerts can fire regardless of what crash events are detected during the outage. All crash event data points, control message data points, and LWT messages accumulate in their respective SQS queues unread. All three queues are configured with a 14-day message retention period — independent of the Hot Storage 24-hour retention window. Hot Storage telemetry expires at 24 hours; SQS retains event data points for 14 days. On recovery, Processing Infrastructure drains all three queues: events from within 24 hours of the crash are processed via Branch A (full telemetry validation); events older than 24 hours are processed via Branch B (retrospective alert to rider — no Hot Storage data available). Events still unprocessed after 14 days expire from SQS with no cold storage record — a 14-day Processing Infrastructure outage is a catastrophic failure beyond the scope of this design. DLQ on each queue catches messages that fail to process after recovery (bug/error scenario during drain) and is not used for outage buffering.
 >
-> **Telemetry collection during outage:** The telemetry pipeline — Helmet → Smartphone → IoT Core → Telemetry Infrastructure → Hot Storage — has no dependency on Processing Infrastructure. Collection and Hot Storage writes continue normally throughout the outage. Crash event pointers continue to be written to SQS Crash Queue by Telemetry Infrastructure on crash flag detection. LWT messages from IoT Core continue to be written to SQS LWT Queue. They simply accumulate unread.
+> **Telemetry collection during outage:** The telemetry pipeline — Helmet → Smartphone → IoT Core → Telemetry Infrastructure → Hot Storage — has no dependency on Processing Infrastructure. Collection and Hot Storage writes continue normally throughout the outage. Crash event data points continue to be written to SQS Crash Queue by Telemetry Infrastructure on crash flag detection. LWT messages from IoT Core continue to be written to SQS LWT Queue. They simply accumulate unread.
 
 ---
 
@@ -1972,10 +1972,10 @@
 [AWS IoT Core] → [Telemetry Infrastructure] : telemetry payload, helmet ID, timestamp                              : immediately via IoT Core rules engine
 [Telemetry Infrastructure] → [Hot Storage] : batch payload, batch timestamp                                         : on every receive
 [Telemetry Infrastructure] → [Telemetry Infrastructure] : inspect batch for crash flag                              : immediately
-[Telemetry Infrastructure] → [SQS Crash Queue] : crash event pointer, helmet ID, timestamp                         : if crash flag found — pointer accumulates unread
+[Telemetry Infrastructure] → [SQS Crash Queue] : crash event data point, helmet ID, timestamp                         : if crash flag found — data point accumulates unread
 ```
 
-> Telemetry collection and Hot Storage writes continue normally. SQS Crash Queue and SQS Control Queue accumulate unread pointers. No alerts can fire during this period.
+> Telemetry collection and Hot Storage writes continue normally. SQS Crash Queue and SQS Control Queue accumulate unread data points. No alerts can fire during this period.
 
 ---
 
@@ -1983,7 +1983,7 @@
 
 > Low battery warnings and shutdown messages are forwarded by Telemetry Infrastructure to SQS Control Queue as normal. Processing Infrastructure cannot read them. No ack is sent back for shutdown messages.
 ```
-[Telemetry Infrastructure] → [SQS Control Queue]  : control message pointer, helmet ID, timestamp                  : on receiving low battery warning or shutdown message — pointer accumulates unread
+[Telemetry Infrastructure] → [SQS Control Queue]  : control message data point, helmet ID, timestamp                  : on receiving low battery warning or shutdown message — data point accumulates unread
 ```
 
 #### Shutdown During Outage — Helmet Behaviour
@@ -2031,7 +2031,7 @@
 
 #### Control Queue — Processed First
 ```
-[Processing Infrastructure] → [SQS Control Queue] : read all held control message pointers                     : immediately on recovery
+[Processing Infrastructure] → [SQS Control Queue] : read all held control message data points                     : immediately on recovery
 [Processing Infrastructure] → [Processing Infrastructure] : process control messages in order per helmet ID         : immediately
 [Processing Infrastructure] → [Processing Infrastructure] : apply state updates — mark helmet as low battery or offline as appropriate : on each message processed
 ```
@@ -2076,8 +2076,8 @@
 
 #### Crash Queue — Processed Last
 ```
-[Processing Infrastructure] → [SQS Crash Queue]      : read all held crash event pointers                         : after LWT Queue drained
-[Processing Infrastructure] → [Hot Storage]           : query telemetry history for helmet ID                      : on each crash event pointer read
+[Processing Infrastructure] → [SQS Crash Queue]      : read all held crash event data points                         : after LWT Queue drained
+[Processing Infrastructure] → [Hot Storage]           : query telemetry history for helmet ID                      : on each crash event data point read
 ```
 
 ---
@@ -2097,6 +2097,10 @@
 
 ##### Validated as Genuine Crash
 
+```
+[Processing Infrastructure] → [SQS Alert Queue]      : crash confirmed, alert type — retrospective, helmet ID, crash timestamp, incident location from crash data point : immediately
+```
+
 > Retrospective alert mechanic runs. Identical to Flow 4 Retrospective Alert. See Flow 4 — Retrospective Alert.
 
 ---
@@ -2104,7 +2108,7 @@
 #### Branch B — Beyond 24 Hours (No Hot Storage Data Available)
 ```
 [Hot Storage] → [Processing Infrastructure]           : no data found — retention window expired                    : immediately
-[Processing Infrastructure] → [SQS Alert Queue]         : cannot validate — alert type — retrospective, helmet ID, crash timestamp, incident location from crash pointer : immediately
+[Processing Infrastructure] → [SQS Alert Queue]         : cannot validate — alert type — retrospective, helmet ID, crash timestamp, incident location from crash data point : immediately
 ```
 
 > Retrospective alert mechanic runs. Identical to Flow 4 Retrospective Alert. See Flow 4 — Retrospective Alert. 
@@ -2113,9 +2117,9 @@
 
 ## Flow 9H — Alerting Infrastructure Failure (Final)
 
-> **Precondition:** Telemetry Infrastructure, IoT Core, and Processing Infrastructure are all operational. Processing Infrastructure writes confirmed crash event pointers to SQS Alert Queue. Alerting Infrastructure is down and cannot read the queue.
+> **Precondition:** Telemetry Infrastructure, IoT Core, and Processing Infrastructure are all operational. Processing Infrastructure writes confirmed crash event data points to SQS Alert Queue. Alerting Infrastructure is down and cannot read the queue.
 >
-> **Known limitation:** No crash alerts can be dispatched to Next of Kin or Emergency Services during the outage. SQS Alert Queue is configured with a 14-day message retention period — all confirmed crash event pointers accumulate unread and are drained on recovery. DLQ catches messages that fail to process after recovery (application-layer bug or error during drain) and is not used for outage buffering.
+> **Known limitation:** No crash alerts can be dispatched to Next of Kin or Emergency Services during the outage. SQS Alert Queue is configured with a 14-day message retention period — all confirmed crash event data points accumulate unread and are drained on recovery. DLQ catches messages that fail to process after recovery (application-layer bug or error during drain) and is not used for outage buffering.
 
 ---
 
@@ -2145,7 +2149,7 @@
 
 ### Crash Confirmed During Outage
 
-> Processing Infrastructure continues operating normally. Confirmed crash event pointers are written to SQS Alert Queue as normal. Alerting Infrastructure is not reading the queue — pointers accumulate unread. 14-day SQS retention ensures no event pointer is lost during any realistic outage.
+> Processing Infrastructure continues operating normally. Confirmed crash event data points are written to SQS Alert Queue as normal. Alerting Infrastructure is not reading the queue — data points accumulate unread. 14-day SQS retention ensures no event data point is lost during any realistic outage.
 
 ```
 [Processing Infrastructure] → [SQS Alert Queue]   : crash confirmed, alert type — standard or retrospective, helmet ID, crash timestamp, incident location : on each validated genuine crash
@@ -2167,7 +2171,7 @@
 [Helmet HUD] → [Rider]                             : "Alert system offline — countdown cancelled, emergency services cannot be contacted" : immediately
 ```
 
-> The in-progress crash event pointer remains in SQS Alert Queue and is processed on recovery. Alert type determination runs at read time — see Flow 3 — Alerting Infrastructure Alert Type Determination.
+> The in-progress crash event data point remains in SQS Alert Queue and is processed on recovery. Alert type determination runs at read time — see Flow 3 — Alerting Infrastructure Alert Type Determination.
 
 ---
 
@@ -2204,7 +2208,7 @@
 ### Queue Drain on Recovery
 
 ```
-[Alerting Infrastructure] → [SQS Alert Queue]      : read all held alert event pointers                             : immediately on recovery, FCFS order
+[Alerting Infrastructure] → [SQS Alert Queue]      : read all held alert event data points                             : immediately on recovery, FCFS order
 ```
 
 > Alert type determination runs on each event at read time. See Flow 3 — Alerting Infrastructure Alert Type Determination. Standard events are checked against the standard alert threshold in Parameter Store — events that have sat in the queue beyond the threshold are downgraded to retrospective. All retrospective events show a persistent confirm or cancel notification to the rider. If rider is unreachable — cold storage log, no alert fired.

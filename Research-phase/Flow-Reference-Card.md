@@ -85,7 +85,7 @@
 **Crash path:**
 - Crash flag detected by edge processing on helmet
 - Embedded in standard telemetry payload → Smartphone → IoT Core → Telemetry Infra
-- Telemetry Infra inspects batch → writes crash pointer to **SQS Crash Queue**
+- Telemetry Infra inspects batch → writes crash data point to **SQS Crash Queue**
 - Processing Infra reads from SQS → queries Hot Storage → validates
 
 **Branch A — False Positive:**
@@ -337,7 +337,7 @@
 **Precondition:** IoT Core and Telemetry Infra are up. Processing Infra goes down.
 
 - Telemetry pipeline continues normally throughout — no dependency on Processing Infra
-- Crash pointers → SQS Crash Queue (accumulate unread)
+- Crash data points → SQS Crash Queue (accumulate unread)
 - Control messages → SQS Control Queue (accumulate unread)
 - LWT messages → SQS LWT Queue (accumulate unread)
 - All three queues retain messages for **14 days** (independent of Hot Storage 24-hour expiry)
@@ -360,7 +360,7 @@
 
 | Queue | Source | Consumer | Retention | Purpose |
 |---|---|---|---|---|
-| SQS Crash Queue | Telemetry Infra | Processing Infra | 14 days | Crash event pointers |
+| SQS Crash Queue | Telemetry Infra | Processing Infra | 14 days | Crash event data points |
 | SQS Control Queue | Telemetry Infra | Processing Infra | 14 days | Low battery, shutdown, battery death |
 | SQS LWT Queue | IoT Core rules engine | Processing Infra | 14 days | Unexpected dropout events |
 | SQS Alert Queue | Processing Infra | Alerting Infra | 14 days | Validated crash events, false positives |
