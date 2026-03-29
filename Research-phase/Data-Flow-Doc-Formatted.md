@@ -519,16 +519,57 @@
 
 ---
 
-### Alert Countdown
+### Alerting Infrastructure Alert Type Determination
+
+> This block runs every time Alerting Infrastructure reads an event from SQS Alert Queue, across all flows.
 
 ```
-[Processing Infrastructure] → [Alerting Infrastructure] : crash confirmed, helmet ID, crash timestamp, incident location : on crash confirmation or rider override
-[Alerting Infrastructure] → [Helmet HUD]  : 30-second countdown — "Crash detected — cancel to abort alert"         : immediately
-[Alerting Infrastructure] → [Smartphone App] : 30-second countdown — "Crash detected — cancel to abort alert"      : immediately
+[Alerting Infrastructure] → [SQS Alert Queue]     : read alert event pointer                                        : event-driven
+[Alerting Infrastructure] → [Alerting Infrastructure] : check alert type label on event — standard or retrospective : immediately on read
+```
+
+#### Label — Retrospective
+
+```
+[Alerting Infrastructure] → [Alerting Infrastructure] : alert type is retrospective — proceed to retrospective notification : immediately
+```
+
+> Proceed to Retrospective Alert. See Flow 4 — Retrospective Alert.
+
+#### Label — Standard
+
+```
+[Alerting Infrastructure] → [Alerting Infrastructure] : alert type is standard — check elapsed time since crash timestamp against standard alert threshold from Parameter Store : immediately
+```
+
+##### Within Threshold — Run Countdown
+
+```
+[Alerting Infrastructure] → [Helmet HUD]          : 30-second countdown — "Crash detected — cancel to abort alert"  : immediately
+[Alerting Infrastructure] → [Smartphone App]      : 30-second countdown — "Crash detected — cancel to abort alert"  : immediately
 ```
 
 > Cloud owns the countdown. Countdown displayed on both devices simultaneously.
-> Rider cancels from either device — only one cancel needed.
+> Rider cancels from either device — only one cancel needed. Proceed to Alert Countdown cancel and fire branches. See Flow 3 — Alert Countdown.
+
+##### Beyond Threshold — Downgrade to Retrospective
+
+```
+[Alerting Infrastructure] → [Alerting Infrastructure] : elapsed time exceeds standard alert threshold — downgrade to retrospective, crash timestamp, helmet ID : immediately
+```
+
+> Proceed to Retrospective Alert. See Flow 4 — Retrospective Alert.
+
+---
+
+### Alert Countdown
+
+```
+[Processing Infrastructure] → [SQS Alert Queue]   : crash confirmed, alert type — standard, helmet ID, crash timestamp, incident location : on crash confirmation or rider override
+```
+
+> Alerting Infrastructure reads from SQS Alert Queue and applies alert type determination. See Flow 3 — Alerting Infrastructure Alert Type Determination.
+
 
 #### Sub-branch — Rider Cancels Within Countdown
 
@@ -664,7 +705,12 @@
 ### Retrospective Alert (runs after Case A validated or Case B confirmed)
 
 ```
-[Processing Infrastructure] → [Alerting Infrastructure] : crash confirmed, helmet ID, crash timestamp, incident location from buffer, current location from phone : on crash confirmation
+[Processing Infrastructure] → [SQS Alert Queue]         : crash confirmed, alert type — retrospective, helmet ID, crash timestamp, incident location from buffer, current location from phone : on crash confirmation
+```
+
+> Alerting Infrastructure reads from SQS Alert Queue. Label is retrospective — persistent notification shown immediately. See Flow 3 — Alerting Infrastructure Alert Type Determination.
+
+```
 [Alerting Infrastructure] → [Smartphone App]            : persistent notification — "Crash detected at [timestamp] — Alert emergency services?"                  : immediately
 [Alerting Infrastructure] → [Helmet HUD]                : persistent notification — "Crash detected at [timestamp] — Alert emergency services?"                  : immediately
 ```
@@ -974,10 +1020,11 @@
 
 ```
 [Processing Infrastructure] → [Processing Infrastructure] : crash confirmed, proceed to alert                       : on validation result
-[Processing Infrastructure] → [Alerting Infrastructure]  : crash confirmed, helmet ID, crash timestamp, incident location : immediately
-[Alerting Infrastructure] → [Smartphone App] : 30-second countdown — "Crash detected — cancel to abort alert"       : immediately
-[Alerting Infrastructure] → [Helmet HUD]  : 30-second countdown — "Crash detected — cancel to abort alert"         : immediately
+[Processing Infrastructure] → [SQS Alert Queue]          : crash confirmed, alert type — standard, helmet ID, crash timestamp, incident location : immediately
 ```
+
+> Alerting Infrastructure reads from SQS Alert Queue and applies alert type determination. See Flow 3 — Alerting Infrastructure Alert Type Determination.
+
 
 > Helmet may power down during countdown — smartphone carries countdown alone if helmet dies.
 > Cloud owns the countdown regardless of helmet status.
@@ -1107,10 +1154,11 @@
 
 ```
 [Processing Infrastructure] → [Processing Infrastructure] : crash confirmed, proceed to alert                       : on validation result
-[Processing Infrastructure] → [Alerting Infrastructure]  : crash confirmed, helmet ID, crash timestamp, incident location : immediately
-[Alerting Infrastructure] → [Smartphone App] : 30-second countdown — "Crash detected — cancel to abort alert"       : immediately
-[Alerting Infrastructure] → [Helmet HUD]  : 30-second countdown — "Crash detected — cancel to abort alert"         : immediately
+[Processing Infrastructure] → [SQS Alert Queue]          : crash confirmed, alert type — standard, helmet ID, crash timestamp, incident location : immediately
 ```
+
+> Alerting Infrastructure reads from SQS Alert Queue and applies alert type determination. See Flow 3 — Alerting Infrastructure Alert Type Determination.
+
 
 > Helmet is gone — HUD notification may not be deliverable.
 > Smartphone carries the countdown — 30 seconds acts as cancellation window.
@@ -1206,6 +1254,7 @@
 [Prometheus] → [CI/CD Pipeline]                    : /health endpoint scrape                                        : every 60 seconds
 [Prometheus] → [SQS Crash Queue]                   : queue depth, message age, dead letter queue count              : every 60 seconds
 [Prometheus] → [SQS Control Queue]                 : queue depth, message age, dead letter queue count              : every 60 seconds
+[Prometheus] → [SQS Alert Queue]                   : queue depth, message age, dead letter queue count              : every 60 seconds
 [CloudWatch] → [IoT Core]                          : health and performance metrics scrape                          : every 30 seconds
 ```
 
@@ -1219,6 +1268,7 @@
 [Prometheus] → [Alerting Infrastructure]           : CPU, memory, active alert count, delivery latency              : every 60 seconds
 [Prometheus] → [Database — Hot Storage]            : CPU, memory, write latency, storage utilisation                : every 60 seconds
 [Prometheus] → [Database — Cold Storage]           : CPU, memory, write latency, storage utilisation                : every 60 seconds
+[Prometheus] → [SQS Alert Queue]                   : queue depth, DLQ depth, message age                            : every 60 seconds
 [CloudWatch] → [IoT Core]                          : connection count, message rate, error rate                      : every 30 seconds
 ```
 
@@ -1446,10 +1496,10 @@
 ##### Validated as Genuine Crash
 
 ```
-[Processing Infrastructure] → [Alerting Infrastructure]   : crash confirmed, helmet ID, crash timestamp, incident location                              : immediately
-[Alerting Infrastructure] → [Helmet HUD]                  : 30-second countdown — "Crash detected — cancel to abort alert"                             : immediately
-[Alerting Infrastructure] → [Smartphone App]              : 30-second countdown — "Crash detected — cancel to abort alert"                             : immediately
+[Processing Infrastructure] → [SQS Alert Queue]           : crash confirmed, alert type — standard, helmet ID, crash timestamp, incident location       : immediately
 ```
+
+> Alerting Infrastructure reads from SQS Alert Queue and applies alert type determination. See Flow 3 — Alerting Infrastructure Alert Type Determination.
 
 > Full Flow 3 alert countdown runs unmodified from this point. See Flow 3 — Alert Countdown.
 
@@ -1462,7 +1512,12 @@
 ```
 [Processing Infrastructure] → [Hot Storage]               : query recent telemetry for helmet ID                                                        : on re-validation attempt
 [Hot Storage] → [Processing Infrastructure]               : no data found — retention window expired                                                    : immediately
-[Processing Infrastructure] → [Alerting Infrastructure]   : cannot validate — telemetry expired, escalate to rider, helmet ID, crash timestamp, incident location from held alert : immediately
+[Processing Infrastructure] → [SQS Alert Queue]           : cannot validate — alert type — retrospective, helmet ID, crash timestamp, incident location from held alert : immediately
+```
+
+> Alerting Infrastructure reads from SQS Alert Queue. Label is retrospective — persistent notification shown immediately.
+
+```
 [Alerting Infrastructure] → [Smartphone App]              : persistent notification — "A crash alert from [timestamp] could not be verified — do you want to alert emergency services?" : immediately
 [Alerting Infrastructure] → [Helmet HUD]                  : persistent notification — "Crash alert from [timestamp] unverified — see smartphone app"    : immediately if helmet still online
 ```
@@ -1956,7 +2011,7 @@
 ```
 [Processing Infrastructure] → [Hot Storage]      : query last telemetry for helmet ID                            : immediately
 [Hot Storage] → [Processing Infrastructure]      : no data found — retention window expired                     : immediately
-[Processing Infrastructure] → [Alerting Infrastructure] : cannot validate — telemetry expired, escalate to rider, helmet ID, last known timestamp from LWT message : immediately
+[Processing Infrastructure] → [SQS Alert Queue]         : cannot validate — alert type — retrospective, helmet ID, last known timestamp from LWT message : immediately
 ```
 
 > Retrospective alert mechanic runs. Identical to Flow 4 Retrospective Alert. See Flow 4 — Retrospective Alert.
@@ -1994,7 +2049,107 @@
 #### Branch B — Beyond 24 Hours (No Hot Storage Data Available)
 ```
 [Hot Storage] → [Processing Infrastructure]           : no data found — retention window expired                    : immediately
-[Processing Infrastructure] → [Alerting Infrastructure] : cannot validate — telemetry expired, escalate to rider, helmet ID, crash timestamp, incident location from crash pointer : immediately
+[Processing Infrastructure] → [SQS Alert Queue]         : cannot validate — alert type — retrospective, helmet ID, crash timestamp, incident location from crash pointer : immediately
 ```
 
 > Retrospective alert mechanic runs. Identical to Flow 4 Retrospective Alert. See Flow 4 — Retrospective Alert. 
+
+---
+
+## Flow 9H — Alerting Infrastructure Failure (Final)
+
+> **Precondition:** Telemetry Infrastructure, IoT Core, and Processing Infrastructure are all operational. Processing Infrastructure writes confirmed crash event pointers to SQS Alert Queue. Alerting Infrastructure is down and cannot read the queue.
+>
+> **Known limitation:** No crash alerts can be dispatched to Next of Kin or Emergency Services during the outage. SQS Alert Queue is configured with a 14-day message retention period — all confirmed crash event pointers accumulate unread and are drained on recovery. DLQ catches messages that fail to process after recovery (application-layer bug or error during drain) and is not used for outage buffering.
+
+---
+
+### Detection
+
+```
+[Prometheus] → [Alerting Infrastructure]           : /health endpoint scrape                                        : every 60 seconds
+[Alerting Infrastructure] → [Prometheus]           : no response — health check failed                              : on scrape attempt during outage
+[Prometheus] → [Alertmanager]                      : alert fired, Alerting Infrastructure unreachable, timestamp    : immediately
+[Alertmanager] → [PagerDuty]                       : Alerting Infrastructure down, timestamp                        : immediately
+[PagerDuty] → [Infrastructure Engineer]            : page — Alerting Infrastructure offline, investigate immediately : immediately via SMS and call
+```
+
+---
+
+### Rider Notification
+
+```
+[Monitoring Infrastructure] → [AWS IoT Core]       : publish infra down status, helmet ID, timestamp               : once per active helmet, on failure confirmed
+[AWS IoT Core] → [Smartphone]                      : infra down status message                                      : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                         : "Alert system temporarily offline — emergency notifications paused" : immediately
+[Smartphone] → [Helmet HUD]                        : infra down status, helmet ID, timestamp                        : immediately via Bluetooth
+[Helmet HUD] → [Rider]                             : "Alert system temporarily offline — emergency notifications paused" : immediately
+```
+
+---
+
+### Crash Confirmed During Outage
+
+> Processing Infrastructure continues operating normally. Confirmed crash event pointers are written to SQS Alert Queue as normal. Alerting Infrastructure is not reading the queue — pointers accumulate unread. 14-day SQS retention ensures no event pointer is lost during any realistic outage.
+
+```
+[Processing Infrastructure] → [SQS Alert Queue]   : crash confirmed, alert type — standard or retrospective, helmet ID, crash timestamp, incident location : on each validated genuine crash
+```
+
+> No alert is dispatched to Next of Kin or Emergency Services during the outage. Rider is already aware the alert system is offline — no additional per-crash notification sent.
+
+---
+
+### Mid-Countdown Failure
+
+> If Alerting Infrastructure fails while a 30-second countdown is already in progress:
+
+```
+[Monitoring Infrastructure] → [AWS IoT Core]       : publish infra down status, helmet ID, timestamp               : on failure confirmed
+[AWS IoT Core] → [Smartphone]                      : infra down status message                                      : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                         : "Alert system offline — countdown cancelled, emergency services cannot be contacted" : immediately
+[Smartphone] → [Helmet HUD]                        : infra down status, helmet ID, timestamp                        : immediately via Bluetooth
+[Helmet HUD] → [Rider]                             : "Alert system offline — countdown cancelled, emergency services cannot be contacted" : immediately
+```
+
+> The in-progress crash event pointer remains in SQS Alert Queue and is processed on recovery. Alert type determination runs at read time — see Flow 3 — Alerting Infrastructure Alert Type Determination.
+
+---
+
+### DLQ Monitoring
+
+```
+[Prometheus] → [SQS Alert Queue]                   : queue depth, DLQ depth, message age                            : every 60 seconds
+[Prometheus] → [Alertmanager]                      : alert fired, DLQ depth non-zero, queue name, timestamp         : on DLQ messages detected
+[Alertmanager] → [PagerDuty]                       : unprocessed messages in DLQ, queue name, message count, timestamp : immediately
+[PagerDuty] → [Infrastructure Engineer]            : page — failed message processing detected in Alert Queue DLQ, investigate Alerting Infrastructure : immediately via SMS and call
+```
+
+> DLQ messages indicate an application-layer processing failure during recovery drain — the message was received by Alerting Infrastructure but failed to process after maxReceiveCount attempts. This is a different scenario from the outage itself, which is handled by the 14-day SQS retention period.
+
+---
+
+### On Alerting Infrastructure Recovery
+
+```
+[Prometheus] → [Alerting Infrastructure]           : /health endpoint scrape                                        : every 60 seconds
+[Alerting Infrastructure] → [Prometheus]           : health check passed                                            : on recovery
+[Prometheus] → [Alertmanager]                      : alert resolved, Alerting Infrastructure restored, timestamp    : immediately
+[Alertmanager] → [PagerDuty]                       : Alerting Infrastructure restored, timestamp                    : immediately
+[PagerDuty] → [Infrastructure Engineer]            : Alerting Infrastructure restored, timestamp                    : immediately
+[Monitoring Infrastructure] → [AWS IoT Core]       : publish infra restored status, helmet ID, timestamp            : once per active helmet, on recovery confirmed
+[AWS IoT Core] → [Smartphone]                      : infra restored status message                                   : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                         : "Alert system restored — emergency notifications operational"  : immediately
+[Smartphone] → [Helmet HUD]                        : infra restored status, helmet ID, timestamp                    : immediately via Bluetooth
+[Helmet HUD] → [Rider]                             : "Alert system restored — emergency notifications operational"  : immediately
+```
+
+---
+
+### Queue Drain on Recovery
+
+```
+[Alerting Infrastructure] → [SQS Alert Queue]      : read all held alert event pointers                             : immediately on recovery, FCFS order
+```
+
+> Alert type determination runs on each event at read time. See Flow 3 — Alerting Infrastructure Alert Type Determination. Standard events are checked against the standard alert threshold in Parameter Store — events that have sat in the queue beyond the threshold are downgraded to retrospective. All retrospective events show a persistent confirm or cancel notification to the rider. If rider is unreachable — cold storage log, no alert fired.

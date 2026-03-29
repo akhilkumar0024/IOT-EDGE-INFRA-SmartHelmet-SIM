@@ -341,3 +341,21 @@ that arrived prior to the crash event from the hoststorage and take a final call
 without the processing infra the events in both the crash queue and the control flag queue will pileup and the control flags that come wont be processed either eventually queue will fail
 the monitoring system will have to detect the failure and inform the user about the systems being down unlilke the earlier case where the telemetry is down but the helmets buffer kept collecting data 
 here we will have to stop collecting data until processing infra is back again to restart the telemetry services 
+
+
+Flow 9H — Alerting Infrastructure Failure.
+The alert infrastructure is responsible for sending the sms, to emergency services and the next of kin in case an event is confirmed to be a crash 
+as, if the alert infra fails no alerts will be sent to the next of kin as well as the emergency services, we will use the monitoring infra to keep checking the 
+health of the alert infra and if its offline the monitoring infra will alert the engineer as well as the inform the rider on the smarphone as well as the 
+helmet HUD the notification will be generic similar to how the notification will be in case of the telemetry, IOT core, or any cloud based infra is down
+
+1. How does Processing Infrastructure hand off to Alerting Infrastructure?
+i will use an SQS queue for the handoff since if the alert infra dies when it comesback we can again send the alerts retrospectively 
+instead of directly making an API call this will loss of alerts in case the alert infra dies 
+ie all the alerts that are vetted and marked genuine by the processing infra will be written into a queue and the alert infra will be watching the queue 
+and will send the alerts accordingly
+
+2. What happens to a crash that's mid-countdown when Alerting Infra dies?
+if the countdown is in progress and the alert infra fails in between we will possibly have to tell the user(systems are offline), when the alert infra recovers it starts alerts based on the queue 
+the question is should the queue be processed in a linear fashion based on the time of arrival should the alert be sent based on the time elapsed(fresh ones first or the stale ones first)
+to keep things simple we will follow the standard first come first serve option for now maybe later add the priority alerts based on multiple parameters 
