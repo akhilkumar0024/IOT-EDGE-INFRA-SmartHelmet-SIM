@@ -89,23 +89,25 @@
 - Processing Infra reads from SQS → queries Hot Storage → validates
 
 **Branch A — False Positive:**
-- 5-second override window shown on both devices
-- A1: Rider does nothing → dismissed, logged to Cold Storage. No alert.
-- A2: Rider overrides → fresh 30-second countdown starts
+- Processing Infra confirms false positive → drops label into **SQS Alert Queue**.
+- Alerting Infra takes over: publishes 5-second override window via IoT Core to devices.
+- A1: Rider does nothing → Alerting Infra logs to Cold Storage. No alert.
+- A2: Rider overrides (via IoT Core) → fresh 30-second countdown starts.
 
 **Branch B — Genuine Crash → Alert Countdown:**
-- Cloud owns the 30-second countdown
-- Displayed on both HUD and Smartphone simultaneously
-- Only one cancel signal needed
-- If cancelled → logged to Cold Storage. No alert.
-- If not cancelled → Next of Kin and Emergency Services alerted independently (retries on each, neither blocks the other)
-- Next of Kin receives: incident location, current location only (no continuous streaming — hostile actor consideration)
+- Processing Infra drops confirmed flag into **SQS Alert Queue**.
+- Alerting Infra reads queue and owns the 30-second countdown via IoT Core.
+- Displayed on both HUD and Smartphone simultaneously.
+- Only one cancel signal needed (sent via IoT Core).
+- If cancelled → Alerting Infra logs to Cold Storage. No alert.
+- If not cancelled → Next of Kin and Emergency Services alerted independently.
+- Next of Kin receives: incident location, current location only (hostile actor consideration).
 
 **Key decisions:**
-- Crash flag is a field in the telemetry payload — NOT a separate MQTT topic
-- Telemetry Infra is the only service that writes to SQS Crash Queue
-- Processing Infra never receives crash events directly from IoT Core
-- All cold storage writes for crash outcomes owned by: Processing Infra (validation outcome) and Alerting Infra (delivery outcome)
+- Crash flag is a field in the telemetry payload — NOT a separate MQTT topic.
+- Telemetry Infra is the only service writing to SQS Crash Queue.
+- Processing Infra validates but is stateless regarding alerts; it hands off all completed validations (even false positives) to **SQS Alert Queue**.
+- Alerting Infra manages all user interactive states (via AWS Step Functions) and final Cold Storage writes for incident logs.
 
 ---
 
@@ -125,10 +127,10 @@
 **Case B (beyond 24 hours):** No Hot Storage → Processing Infra escalates direct to rider → Retrospective Alert
 
 **Retrospective Alert:**
-- Persistent notification on Smartphone (no countdown, rider must act)
-- Rider confirms → alert fires to Next of Kin + Emergency Services
-- Rider cancels → logged to Cold Storage, no alert
-- Rider unreachable → logged to Cold Storage, no alert
+- Persistent notification published by Alerting Infra via IoT Core to both devices (no countdown, rider must act).
+- Rider confirms (via IoT Core) → alert fires to Next of Kin + Emergency Services.
+- Rider cancels (via IoT Core) → Alerting Infra logs to Cold Storage, no alert.
+- Rider unreachable → Alerting Infra logs to Cold Storage, no alert.
 
 **Key decisions:**
 - Flow 5 (Retrospective Alert After Phone Revival) absorbed into Flow 4
@@ -361,6 +363,7 @@
 | SQS Crash Queue | Telemetry Infra | Processing Infra | 14 days | Crash event pointers |
 | SQS Control Queue | Telemetry Infra | Processing Infra | 14 days | Low battery, shutdown, battery death |
 | SQS LWT Queue | IoT Core rules engine | Processing Infra | 14 days | Unexpected dropout events |
+| SQS Alert Queue | Processing Infra | Alerting Infra | 14 days | Validated crash events, false positives |
 
 ---
 
@@ -378,5 +381,5 @@
 
 ---
 
-*Reference card version: Post-Flow-9G*
-*Last updated: 2026-03-28*
+*Reference card version: Post-Alerting-Decoupling*
+*Last updated: 2026-03-29*

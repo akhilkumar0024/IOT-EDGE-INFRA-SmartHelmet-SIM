@@ -488,28 +488,10 @@
 
 ```
 [Processing Infrastructure] → [Processing Infrastructure] : false positive confirmed, no alert to fire              : on validation result
-[Processing Infrastructure] → [Helmet HUD] : 5-second override window — "False positive detected"                  : immediately
-[Processing Infrastructure] → [Smartphone App] : 5-second override window — "False positive detected"              : immediately
+[Processing Infrastructure] → [SQS Alert Queue]           : false positive confirmed, alert type — false_positive, helmet ID, crash timestamp : immediately
 ```
 
-#### Sub-branch A1 — Rider Does Nothing (Override Window Expires)
-
-```
-[Helmet HUD] → [Rider]                    : dismiss notification                                                    : on 5-second window expiry
-[Smartphone App] → [Rider]                : dismiss notification                                                    : on 5-second window expiry
-[Processing Infrastructure] → [Cold Storage] : false positive log entry, helmet ID, crash timestamp, reason, no override : immediately
-```
-
-> No alert sent.
-
-#### Sub-branch A2 — Rider Overrides (Requests Fresh Countdown)
-
-```
-[Rider] → [Helmet HUD or Smartphone App]  : override tap                                                            : within 5-second window
-[Processing Infrastructure] → [Processing Infrastructure] : override received, start fresh 30-second countdown      : immediately
-```
-
-> Proceed to Alert Countdown below.
+> Processing Infrastructure does not interact with the rider. Alerting Infrastructure handles the override window. See Flow 3 — Alerting Infrastructure Alert Type Determination.
 
 ---
 
@@ -525,8 +507,39 @@
 
 ```
 [Alerting Infrastructure] → [SQS Alert Queue]     : read alert event pointer                                        : event-driven
-[Alerting Infrastructure] → [Alerting Infrastructure] : check alert type label on event — standard or retrospective : immediately on read
+[Alerting Infrastructure] → [Alerting Infrastructure] : check alert type label on event — false_positive, standard, or retrospective : immediately on read
 ```
+
+#### Label — False Positive
+
+```
+[Alerting Infrastructure] → [AWS IoT Core]        : publish 5-second override window, helmet ID, timestamp          : immediately
+[AWS IoT Core] → [Smartphone]                     : override message via MQTT topic                                 : immediately
+[Smartphone App] → [Rider]                        : 5-second override window — "False positive detected"              : immediately
+[Smartphone] → [Helmet HUD]                       : forward override message via Bluetooth                          : immediately
+[Helmet HUD] → [Rider]                            : 5-second override window — "False positive detected"              : immediately
+```
+
+##### Sub-branch — Rider Does Nothing (Override Window Expires)
+
+```
+[Smartphone App] → [Rider]                        : dismiss notification                                            : on 5-second window expiry
+[Helmet HUD] → [Rider]                            : dismiss notification                                            : on 5-second window expiry
+[Alerting Infrastructure] → [Cold Storage]        : false positive log entry, helmet ID, crash timestamp, reason, no override : on 5-second window expiry
+```
+
+> No alert sent.
+
+##### Sub-branch — Rider Overrides (Requests Fresh Countdown)
+
+```
+[Rider] → [Smartphone App]                        : override tap                                                    : within 5-second window
+[Smartphone] → [AWS IoT Core]                     : publish override signal via MQTT                                : immediately
+[AWS IoT Core] → [Alerting Infrastructure]        : route override signal                                           : immediately
+[Alerting Infrastructure] → [Alerting Infrastructure] : override received, start fresh 30-second countdown        : immediately
+```
+
+> Proceed to Alert Countdown below.
 
 #### Label — Retrospective
 
@@ -545,8 +558,11 @@
 ##### Within Threshold — Run Countdown
 
 ```
-[Alerting Infrastructure] → [Helmet HUD]          : 30-second countdown — "Crash detected — cancel to abort alert"  : immediately
-[Alerting Infrastructure] → [Smartphone App]      : 30-second countdown — "Crash detected — cancel to abort alert"  : immediately
+[Alerting Infrastructure] → [AWS IoT Core]        : publish 30-second countdown, helmet ID, timestamp               : immediately
+[AWS IoT Core] → [Smartphone]                     : countdown message via MQTT topic                                : immediately
+[Smartphone App] → [Rider]                        : 30-second countdown — "Crash detected — cancel to abort alert"    : immediately
+[Smartphone] → [Helmet HUD]                       : forward countdown via Bluetooth                                 : immediately
+[Helmet HUD] → [Rider]                            : 30-second countdown — "Crash detected — cancel to abort alert"    : immediately
 ```
 
 > Cloud owns the countdown. Countdown displayed on both devices simultaneously.
@@ -574,12 +590,16 @@
 #### Sub-branch — Rider Cancels Within Countdown
 
 ```
-[Rider] → [Helmet HUD or Smartphone App]  : cancel                                                                  : within 30-second window
-[Helmet HUD or Smartphone App] → [Alerting Infrastructure] : cancel signal, helmet ID, timestamp                    : immediately
+[Rider] → [Smartphone App]                        : cancel                                                          : within 30-second window
+[Smartphone] → [AWS IoT Core]                     : publish cancel signal via MQTT                                  : immediately
+[AWS IoT Core] → [Alerting Infrastructure]        : route cancel signal                                             : immediately
 [Alerting Infrastructure] → [Alerting Infrastructure] : stop countdown                                              : immediately
-[Alerting Infrastructure] → [Helmet HUD]  : dismiss countdown                                                       : immediately
-[Alerting Infrastructure] → [Smartphone App] : dismiss countdown                                                    : immediately
-[Alerting Infrastructure] → [Cold Storage] : cancelled alert record, helmet ID, crash timestamp, cancelled by rider : immediately
+[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss countdown, helmet ID, timestamp                 : immediately
+[AWS IoT Core] → [Smartphone]                     : dismiss countdown message via MQTT topic                        : immediately
+[Smartphone App] → [Rider]                        : dismiss countdown                                               : immediately
+[Smartphone] → [Helmet HUD]                       : forward dismiss countdown via Bluetooth                         : immediately
+[Helmet HUD] → [Rider]                            : dismiss countdown                                               : immediately
+[Alerting Infrastructure] → [Cold Storage]        : cancelled alert record, helmet ID, crash timestamp, cancelled by rider : immediately
 ```
 
 > No alert sent to Next of Kin or Emergency Services.
@@ -711,19 +731,27 @@
 > Alerting Infrastructure reads from SQS Alert Queue. Label is retrospective — persistent notification shown immediately. See Flow 3 — Alerting Infrastructure Alert Type Determination.
 
 ```
-[Alerting Infrastructure] → [Smartphone App]            : persistent notification — "Crash detected at [timestamp] — Alert emergency services?"                  : immediately
-[Alerting Infrastructure] → [Helmet HUD]                : persistent notification — "Crash detected at [timestamp] — Alert emergency services?"                  : immediately
+[Alerting Infrastructure] → [AWS IoT Core]        : publish persistent notification, helmet ID, timestamp           : immediately
+[AWS IoT Core] → [Smartphone]                     : persistent notification message via MQTT topic                  : immediately
+[Smartphone App] → [Rider]                        : persistent notification — "Crash detected at [timestamp] — Alert emergency services?"                  : immediately
+[Smartphone] → [Helmet HUD]                       : forward persistent notification via Bluetooth                   : immediately
+[Helmet HUD] → [Rider]                            : persistent notification — "Crash detected at [timestamp] — Alert emergency services?"                  : immediately
 ```
 
-> No countdown. Notification persists until rider explicitly acts.
+> No countdown. Notification persists until rider explicitly acts from either device.
 
 #### Sub-branch — Rider Cancels
 
 ```
-[Rider] → [Smartphone App]                : cancel                                                                  : on rider action
-[Smartphone App] → [Alerting Infrastructure] : cancel signal, helmet ID, timestamp                                  : immediately
-[Alerting Infrastructure] → [Helmet HUD]  : dismiss notification                                                    : immediately
-[Alerting Infrastructure] → [Cold Storage] : incident log entry, helmet ID, crash timestamp, incident location, cancelled at, cancelled by rider : immediately
+[Rider] → [Smartphone App or Helmet HUD]          : cancel                                                          : on rider action
+[Smartphone] → [AWS IoT Core]                     : publish cancel signal via MQTT                                  : immediately
+[AWS IoT Core] → [Alerting Infrastructure]        : route cancel signal                                             : immediately
+[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss notification, helmet ID, timestamp              : immediately
+[AWS IoT Core] → [Smartphone]                     : dismiss notification message via MQTT topic                     : immediately
+[Smartphone App] → [Rider]                        : dismiss notification                                            : immediately
+[Smartphone] → [Helmet HUD]                       : forward dismiss notification via Bluetooth                      : immediately
+[Helmet HUD] → [Rider]                            : dismiss notification                                            : immediately
+[Alerting Infrastructure] → [Cold Storage]        : incident log entry, helmet ID, crash timestamp, incident location, cancelled at, cancelled by rider : immediately
 ```
 
 > No alert sent to Next of Kin or Emergency Services.
@@ -1008,11 +1036,11 @@
 
 ```
 [Processing Infrastructure] → [Processing Infrastructure] : false positive confirmed, no alert to fire              : on validation result
+[Processing Infrastructure] → [SQS Alert Queue]           : false positive confirmed, alert type — false_positive, helmet ID, crash timestamp, reason, battery death context : immediately
 [Processing Infrastructure] → [Telemetry Infrastructure] : shutdown acknowledgement, helmet ID, timestamp           : immediately
 [Telemetry Infrastructure] → [Smartphone] : shutdown acknowledgement                                                : immediately
 [Smartphone] → [Helmet]                   : shutdown acknowledgement                                                : immediately
 [Helmet] → [Helmet]                       : power down on receiving acknowledgement                                 : immediately
-[Processing Infrastructure] → [Cold Storage] : false positive log entry, helmet ID, crash timestamp, reason, battery death context : immediately
 [Smartphone App] → [Rider]                : "Riding session ended — helmet battery depleted"                        : on shutdown acknowledgement
 ```
 
@@ -1032,10 +1060,15 @@
 ##### Rider Cancels from Smartphone
 
 ```
-[Rider] → [Smartphone App]                : cancel                                                                  : within 30-second window
-[Smartphone App] → [Alerting Infrastructure] : cancel signal, helmet ID, timestamp                                  : immediately
-[Alerting Infrastructure] → [Helmet HUD]  : dismiss notification if still active                                    : immediately
-[Alerting Infrastructure] → [Cold Storage] : cancelled alert record, helmet ID, crash timestamp, cancelled by rider, battery death context : immediately
+[Rider] → [Smartphone App]                        : cancel                                                          : within 30-second window
+[Smartphone] → [AWS IoT Core]                     : publish cancel signal via MQTT                                  : immediately
+[AWS IoT Core] → [Alerting Infrastructure]        : route cancel signal                                             : immediately
+[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss countdown, helmet ID, timestamp                 : immediately
+[AWS IoT Core] → [Smartphone]                     : dismiss countdown message via MQTT topic                        : immediately
+[Smartphone App] → [Rider]                        : dismiss countdown                                               : immediately
+[Smartphone] → [Helmet HUD]                       : forward dismiss countdown via Bluetooth                         : immediately
+[Helmet HUD] → [Rider]                            : dismiss countdown if still active                               : immediately
+[Alerting Infrastructure] → [Cold Storage]        : cancelled alert record, helmet ID, crash timestamp, cancelled by rider, battery death context : immediately
 ```
 
 > No alert sent to Next of Kin or Emergency Services.
@@ -1145,7 +1178,7 @@
 
 ```
 [Processing Infrastructure] → [Processing Infrastructure] : false positive confirmed, no alert to fire              : on validation result
-[Processing Infrastructure] → [Cold Storage] : false positive log entry, helmet ID, crash timestamp, reason, LWT context : immediately
+[Processing Infrastructure] → [SQS Alert Queue]           : false positive confirmed, alert type — false_positive, helmet ID, crash timestamp, reason, LWT context : immediately
 ```
 
 > No alert triggered.
@@ -1167,9 +1200,13 @@
 ##### Rider Cancels from Smartphone Within Countdown
 
 ```
-[Rider] → [Smartphone App]                : cancel                                                                  : within 30-second window
-[Smartphone App] → [Alerting Infrastructure] : cancel signal, helmet ID, timestamp                                  : immediately
-[Alerting Infrastructure] → [Cold Storage] : cancelled alert record, helmet ID, crash timestamp, cancelled by rider, LWT context : immediately
+[Rider] → [Smartphone App]                        : cancel                                                          : within 30-second window
+[Smartphone] → [AWS IoT Core]                     : publish cancel signal via MQTT                                  : immediately
+[AWS IoT Core] → [Alerting Infrastructure]        : route cancel signal                                             : immediately
+[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss countdown, helmet ID, timestamp                 : immediately
+[AWS IoT Core] → [Smartphone]                     : dismiss countdown message via MQTT topic                        : immediately
+[Smartphone App] → [Rider]                        : dismiss countdown                                               : immediately
+[Alerting Infrastructure] → [Cold Storage]        : cancelled alert record, helmet ID, crash timestamp, cancelled by rider, LWT context : immediately
 ```
 
 > No alert sent to Next of Kin or Emergency Services.
@@ -1254,6 +1291,7 @@
 [Prometheus] → [CI/CD Pipeline]                    : /health endpoint scrape                                        : every 60 seconds
 [Prometheus] → [SQS Crash Queue]                   : queue depth, message age, dead letter queue count              : every 60 seconds
 [Prometheus] → [SQS Control Queue]                 : queue depth, message age, dead letter queue count              : every 60 seconds
+[Prometheus] → [SQS LWT Queue]                     : queue depth, message age, dead letter queue count              : every 60 seconds
 [Prometheus] → [SQS Alert Queue]                   : queue depth, message age, dead letter queue count              : every 60 seconds
 [CloudWatch] → [IoT Core]                          : health and performance metrics scrape                          : every 30 seconds
 ```
@@ -1268,6 +1306,7 @@
 [Prometheus] → [Alerting Infrastructure]           : CPU, memory, active alert count, delivery latency              : every 60 seconds
 [Prometheus] → [Database — Hot Storage]            : CPU, memory, write latency, storage utilisation                : every 60 seconds
 [Prometheus] → [Database — Cold Storage]           : CPU, memory, write latency, storage utilisation                : every 60 seconds
+[Prometheus] → [SQS LWT Queue]                     : queue depth, DLQ depth, message age                            : every 60 seconds
 [Prometheus] → [SQS Alert Queue]                   : queue depth, DLQ depth, message age                            : every 60 seconds
 [CloudWatch] → [IoT Core]                          : connection count, message rate, error rate                      : every 30 seconds
 ```
@@ -1433,8 +1472,11 @@
 
 ```
 [Processing Infrastructure] → [Alerting Infrastructure]   : hold all dispersed alerts, fleet-wide issue detected, firmware version, timestamp          : immediately on hold initiated
-[Alerting Infrastructure] → [Helmet HUD]                  : "Fleet-wide issue detected — alert systems under maintenance"                               : immediately to all affected helmets
-[Alerting Infrastructure] → [Smartphone App]              : "Fleet-wide issue detected — alert systems under maintenance, please ride with caution"     : immediately to all affected smartphones
+[Alerting Infrastructure] → [AWS IoT Core]                : publish maintenance notification, all affected helmet IDs, timestamp                        : immediately
+[AWS IoT Core] → [Smartphone]                             : maintenance message via MQTT topic                                                          : immediately to all affected smartphones
+[Smartphone App] → [Rider]                                : "Fleet-wide issue detected — alert systems under maintenance, please ride with caution"     : immediately
+[Smartphone] → [Helmet HUD]                               : forward maintenance message via Bluetooth                                                   : immediately
+[Helmet HUD] → [Rider]                                    : "Fleet-wide issue detected — alert systems under maintenance"                               : immediately
 ```
 
 > Alert systems are in maintenance mode for all affected helmets during the hold window. No alerts fire during this period.
@@ -1456,11 +1498,14 @@
 
 ```
 [Fleet Manager] → [Fleet Management System]               : confirm firmware bug, initiate rollback, firmware version, timestamp                        : on investigation complete
-[Fleet Management System] → [Processing Infrastructure]   : firmware bug confirmed, discard all held alerts for affected firmware version, timestamp     : immediately
-[Processing Infrastructure] → [Processing Infrastructure] : mark all held alerts as firmware-bug false positives, helmet IDs, firmware version          : immediately
-[Processing Infrastructure] → [Cold Storage]              : false positive log entry per held alert, helmet ID, crash timestamp, reason — firmware bug confirmed, firmware version, discarded at : immediately
-[Alerting Infrastructure] → [Helmet HUD]                  : "Fleet-wide issue resolved — alert systems restored"                                        : immediately to all affected helmets
-[Alerting Infrastructure] → [Smartphone App]              : "Fleet-wide issue resolved — alert systems restored"                                        : immediately to all affected smartphones
+[Fleet Management System] → [Processing Infrastructure]   : firmware bug confirmed, discard all held alerts for affected firmware version, timestamp    : immediately
+[Processing Infrastructure] → [SQS Alert Queue]           : false positive confirmed, alert type — false_positive, reason — firmware bug confirmed, helmet IDs, firmware version : immediately per held alert
+[Alerting Infrastructure] → [Cold Storage]                : false positive log entry per held alert, helmet ID, crash timestamp, reason — firmware bug confirmed, firmware version, discarded at : immediately on read
+[Alerting Infrastructure] → [AWS IoT Core]                : publish issue resolved notification, all affected helmet IDs, timestamp                     : immediately
+[AWS IoT Core] → [Smartphone]                             : issue resolved message via MQTT topic                                                       : immediately to all affected smartphones
+[Smartphone App] → [Rider]                                : "Fleet-wide issue resolved — alert systems restored"                                        : immediately
+[Smartphone] → [Helmet HUD]                               : forward issue resolved message via Bluetooth                                                : immediately
+[Helmet HUD] → [Rider]                                    : "Fleet-wide issue resolved — alert systems restored"                                        : immediately
 ```
 
 > No alerts fired. All held alert events written to cold storage with firmware bug remark. Riders informed systems are restored.
@@ -1488,7 +1533,7 @@
 ##### Validated as False Positive
 
 ```
-[Processing Infrastructure] → [Cold Storage]              : false positive log entry, helmet ID, crash timestamp, reason, held alert context            : immediately
+[Processing Infrastructure] → [SQS Alert Queue]           : false positive confirmed, alert type — false_positive, helmet ID, crash timestamp, reason, held alert context : immediately
 ```
 
 > No alert fired.
@@ -1518,15 +1563,19 @@
 > Alerting Infrastructure reads from SQS Alert Queue. Label is retrospective — persistent notification shown immediately.
 
 ```
-[Alerting Infrastructure] → [Smartphone App]              : persistent notification — "A crash alert from [timestamp] could not be verified — do you want to alert emergency services?" : immediately
-[Alerting Infrastructure] → [Helmet HUD]                  : persistent notification — "Crash alert from [timestamp] unverified — see smartphone app"    : immediately if helmet still online
+[Alerting Infrastructure] → [AWS IoT Core]                : publish persistent notification, helmet ID, timestamp                                       : immediately
+[AWS IoT Core] → [Smartphone]                             : persistent notification message via MQTT topic                                              : immediately
+[Smartphone App] → [Rider]                                : persistent notification — "A crash alert from [timestamp] could not be verified — do you want to alert emergency services?" : immediately
+[Smartphone] → [Helmet HUD]                               : forward persistent notification via Bluetooth                                               : immediately
+[Helmet HUD] → [Rider]                                    : persistent notification — "Crash alert from [timestamp] unverified — see smartphone app"    : immediately if helmet still online
 ```
 
 ##### Rider Confirms
 
 ```
-[Rider] → [Smartphone App]                                : confirm                                                                                     : on rider action
-[Smartphone App] → [Alerting Infrastructure]              : confirm signal, helmet ID, timestamp                                                        : immediately
+[Rider] → [Smartphone App or Helmet HUD]                  : confirm                                                                                     : on rider action
+[Smartphone] → [AWS IoT Core]                             : publish confirm signal via MQTT                                                             : immediately
+[AWS IoT Core] → [Alerting Infrastructure]                : route confirm signal                                                                        : immediately
 [Alerting Infrastructure] → [Next of Kin]                 : crash alert, incident location from held alert, current location, incident timestamp        : immediately
 [Alerting Infrastructure] → [Emergency Services]          : crash alert, incident location from held alert, current location, incident timestamp, next of kin contact : immediately, independent of Next of Kin channel
 [Alerting Infrastructure] → [Cold Storage]                : incident record, helmet ID, crash timestamp, incident location, confirmed by rider after hold expiry, delivery outcome per channel : on resolution
@@ -1535,8 +1584,14 @@
 ##### Rider Cancels
 
 ```
-[Rider] → [Smartphone App]                                : cancel                                                                                      : on rider action
-[Smartphone App] → [Alerting Infrastructure]              : cancel signal, helmet ID, timestamp                                                         : immediately
+[Rider] → [Smartphone App or Helmet HUD]                  : cancel                                                                                      : on rider action
+[Smartphone] → [AWS IoT Core]                             : publish cancel signal via MQTT                                                              : immediately
+[AWS IoT Core] → [Alerting Infrastructure]                : route cancel signal                                                                         : immediately
+[Alerting Infrastructure] → [AWS IoT Core]                : publish dismiss notification, helmet ID, timestamp                                          : immediately
+[AWS IoT Core] → [Smartphone]                             : dismiss notification message via MQTT topic                                                 : immediately
+[Smartphone App] → [Rider]                                : dismiss notification                                                                        : immediately
+[Smartphone] → [Helmet HUD]                               : forward dismiss notification via Bluetooth                                                  : immediately
+[Helmet HUD] → [Rider]                                    : dismiss notification                                                                        : immediately
 [Alerting Infrastructure] → [Cold Storage]                : cancelled alert record, helmet ID, crash timestamp, cancelled by rider after hold expiry     : immediately
 ```
 
