@@ -2418,6 +2418,20 @@ No multi-region or cross-AZ database strategy is implemented. A regional outage 
 
 > All crash events during a Hot Storage outage are degraded to retrospective regardless of how soon they are processed. Rider is presented with confirm or cancel on both devices. See Flow 4 — Retrospective Alert.
 
+#### Backlog Sync Behavior During Hot Storage Outage
+
+> Unlike the live path, the catch-up channel (backlog sync) is synchronous and requires a database write confirmation before acknowledging the smartphone.
+>
+> ```
+> [Smartphone] → [Telemetry Infrastructure]             : publish backlog chunk via Catch-up Channel
+> [Telemetry Infrastructure] → [Hot Storage]             : write fails — storage unavailable
+> [Telemetry Infrastructure] → [Smartphone]              : no acknowledgement sent (timeout) or error returned
+> [Smartphone] → [Smartphone]                           : sync paused — retain chunk in local storage, retry later
+> ```
+>
+> **Result:** Data being synced during a Hot Storage outage is PRESERVED on the device layer and only flushes once Hot Storage is restored. This ensures that historical data (which may contain a crash from a period of no internet) is never deleted from the helmet until it is confirmed in the cloud.
+
+
 #### On Hot Storage Recovery
 
 ```
@@ -2433,7 +2447,7 @@ No multi-region or cross-AZ database strategy is implemented. A regional outage 
 [Helmet HUD] → [Rider]                             : "Alert system restored — emergency notifications operational"  : immediately
 ```
 
-> Normal writes resume for new batches; no catch-up runs for data dropped during the outage. SQS Crash Queue data points held during the outage are processed on recovery — events that find no corresponding history in Hot Storage (either because it was dropped during the outage or expired via TTL) are degraded to retrospective as normal.
+> Normal writes resume for new batches. Any Backlog Sync that was paused during the outage resumes and receives acknowledgments from Telemetry Infrastructure as writes to Hot Storage succeed. No catch-up runs for *live* data dropped during the outage. SQS Crash Queue data points held during the outage are processed on recovery — events that find no corresponding history in Hot Storage (either because it was dropped during the outage or expired via TTL) are degraded to retrospective as normal.
 
 ---
 

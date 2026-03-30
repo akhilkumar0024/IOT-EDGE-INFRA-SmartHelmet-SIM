@@ -380,7 +380,10 @@
 - Telemetry Infra receives data but cannot write → **data dropped at write layer**.
 - SQS Crash Queue *still* gets crash data point (written independently).
 - Processing Infra reads crash event → queries Hot Storage → finds no data → **degrades to retrospective alert** (confirm/cancel prompt to rider).
-- On recovery: normal writes resume. No catch-up sync for lost telemetry.
+- Hot Storage failure is invisible to the *live* device layer (no local buffering on smartphone).
+- **Backlog Sync blocked:** Unlike live, catch-up sync is synchronous and **pauses** if Hot Storage is down (no ACK sent to phone). Data preserved on device.
+- On recovery: normal writes resume. Paused syncs resume and flush. No catch-up for *live* data dropped.
+
 
 **Cold Storage failure (Blocks dispatch):**
 - Alerting Infra cannot look up Next of Kin or Emergency contacts → **dispatch blocked**.
