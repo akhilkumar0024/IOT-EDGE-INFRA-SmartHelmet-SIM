@@ -12,6 +12,22 @@
 - [Flow 6 — Graceful Shutdown](#flow-6--graceful-shutdown)
 - [Flow 7 — Battery Death](#flow-7--battery-death)
 - [Flow 8 — Unexpected Dropout / LWT](#flow-8--unexpected-dropout--lwt)
+- [Flow 9 — Mass Alert and Infrastructure Failure Detection](#flow-9--mass-alert-and-infrastructure-failure-detection)
+    - [9A — Monitoring Stack and Detection](#flow-9a--monitoring-stack-and-detection)
+    - [9B — Sensor Failure (Device Layer)](#flow-9b--sensor-failure-device-layer)
+    - [9C — Helmet Telemetry to Smartphone Failure (Device Layer)](#flow-9c--helmet-telemetry-to-smartphone-failure-device-layer)
+    - [9D — Smartphone Telemetry to Cloud Failure (Device Layer)](#flow-9d--smartphone-telemetry-to-cloud-failure-device-layer)
+    - [9E — IoT Core / MQTT Broker Failure (Cloud Layer)](#flow-9e--iot-core--mqtt-broker-failure-cloud-layer)
+    - [9F — Telemetry Infrastructure Failure (Cloud Layer)](#flow-9f--telemetry-infrastructure-failure-cloud-layer)
+    - [9G — Processing Infrastructure Failure (Cloud Layer)](#flow-9g--processing-infrastructure-failure-cloud-layer)
+    - [9H — Alerting Infrastructure Failure (Cloud Layer)](#flow-9h--alerting-infrastructure-failure-cloud-layer)
+    - [9I — Database Failure (Cloud Layer)](#flow-9i--database-failure-cloud-layer)
+    - [9J — Parameter Store Unavailability (Config Layer)](#flow-9j--parameter-store-unavailability-config-layer)
+    - [9K — Bad Firmware Update (Config Layer)](#flow-9k--bad-firmware-update-config-layer)
+    - [9L — Bad Infrastructure Deploy (Config Layer)](#flow-9l--bad-infrastructure-deploy---cicd-pipeline-config-layer)
+    - [9M — Monitoring Stack Failure (Observability Layer)](#flow-9m--monitoring-stack-failure-observability-layer)
+- [Known Limitations](#known-limitations)
+- [Future Enhancements (Post-MVP)](#future-enhancements-post-mvp)
 
 ---
 
