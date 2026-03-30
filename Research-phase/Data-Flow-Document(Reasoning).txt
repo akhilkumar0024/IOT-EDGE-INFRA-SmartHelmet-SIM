@@ -359,3 +359,23 @@ and will send the alerts accordingly
 if the countdown is in progress and the alert infra fails in between we will possibly have to tell the user(systems are offline), when the alert infra recovers it starts alerts based on the queue 
 the question is should the queue be processed in a linear fashion based on the time of arrival should the alert be sent based on the time elapsed(fresh ones first or the stale ones first)
 to keep things simple we will follow the standard first come first serve option for now maybe later add the priority alerts based on multiple parameters 
+
+
+Flow 9I- Database failure
+Incase of Hotstorage failure :
+
+If the hotstorage isnt available then new telemetry data wont be written, and the processing infra will have to rely on the queue for those datapoints that 
+are marked crash, but the processing infra will always be degrading them to the retrospective processing hence the alert infra will also initialte the 
+restrospective alert mechanism 
+if the hotstorage fails we will have to inform the user that systems are offline(all the problems related to the cloud will have the same generic error
+ message the user need not know what has failed the user needs to be informed of the error only if the problem is on his side such as internet failure or 
+ outdated app, helmet faulty maintainence needed etc ) 
+
+
+
+in case of the cold storage failure :
+if will lead to loss of audit trails and the alerts functions not being available because the cold storage contains the user information and other things
+hence the alert functions will not be available, suffice to say we can show the same generic error message 
+
+The database failures can be handled by having a replica on standby and in case of failure we can switch to the replica
+The monitoring infra will be responsible for handling the health of the databases and informing the engineer 

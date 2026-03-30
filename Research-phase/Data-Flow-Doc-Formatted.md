@@ -2115,7 +2115,7 @@
 
 ---
 
-## Flow 9H — Alerting Infrastructure Failure (Final)
+## Flow 9H — Alerting Infrastructure Failure
 
 > **Precondition:** Telemetry Infrastructure, IoT Core, and Processing Infrastructure are all operational. Processing Infrastructure writes confirmed crash event data points to SQS Alert Queue. Alerting Infrastructure is down and cannot read the queue.
 >
