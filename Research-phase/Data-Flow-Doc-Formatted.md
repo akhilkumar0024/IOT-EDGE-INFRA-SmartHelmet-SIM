@@ -2512,3 +2512,20 @@ The retrospective alert mechanic depends on rider availability. If the rider is 
 #### Multi-region redundancy out of scope
 No multi-region or cross-AZ database strategy is implemented. A regional outage affecting the database would take the alert system down entirely. This is a known, accepted limitation for a portfolio project.
 
+#### Smartphone Buffer Exhaustion
+The local storage capacity of the smartphone is finite. If a cloud-side outage (e.g., Telemetry Infrastructure failure) lasts long enough, the smartphone will eventually run out of space to store new telemetry chunks. Currently, the behavior for a full buffer is not explicitly enforced at the protocol level, which could lead to application-layer crashes or data stalls on the device.
+
+---
+
+## Future Enhancements (Post-MVP)
+
+#### Circular Buffer Implementation for Device Layer
+To handle extreme outages, the Smartphone App and Helmet firmware can implement a circular buffer strategy. Once the local storage limit is reached, newest data would overwrite the oldest payloads. This ensures the system remains "live" for the most recent events, prioritizing current safety detection over historical logs.
+
+#### Fleet-wide Buffer Monitoring
+Implement cloud-side monitoring of "Average Buffer Depth" across the fleet. If a statistically significant percentage of helmets report a high buffer percentage (via a periodic heartbeat), the DevOps monitoring stack should trigger a Critical Alert, identifying a systemic infrastructure bottleneck or regional outage before devices hit their storage limits.
+
+#### Write-Ahead Logging (WAL) for Cold Storage
+To eliminate the audit trail gap during Cold Storage failures, implement a durable write-ahead log. All logs would be written to a dedicated SQS "Log Queue" first, with a consumer service responsible for draining them into Cold Storage once the database is healthy.
+
+
