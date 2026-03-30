@@ -1260,7 +1260,7 @@
 > | 9F | Telemetry Infrastructure Failure (cloud layer) | ✅ Complete |
 > | 9G | Processing Infrastructure Failure (cloud layer) | ✅ Complete |
 > | 9H | Alerting Infrastructure Failure (cloud layer) | ✅ Complete |
-> | 9I | Database Failure (cloud layer) | ⬜ Pending |
+> | 9I | Database Failure (cloud layer) | ✅ Complete |
 > | 9J | Parameter Store Unavailability (config layer) | ⬜ Pending |
 > | 9K | Bad Firmware Update (config layer) | ⬜ Pending |
 > | 9L | Bad Infrastructure Deploy — CI/CD Pipeline (config layer) | ⬜ Pending |
@@ -2212,3 +2212,289 @@
 ```
 
 > Alert type determination runs on each event at read time. See Flow 3 — Alerting Infrastructure Alert Type Determination. Standard events are checked against the standard alert threshold in Parameter Store — events that have sat in the queue beyond the threshold are downgraded to retrospective. All retrospective events show a persistent confirm or cancel notification to the rider. If rider is unreachable — cold storage log, no alert fired.
+
+---
+
+## Flow 9I — Database Failure (Cloud Layer)
+
+> **Precondition:** All other infrastructure components are operational. One or both database layers — Hot Storage or Cold Storage — become unavailable.
+>
+> **Two failure modes are covered in this flow:**
+> 1. **Hot Storage failure** — telemetry writes fail, crash validation has no history to work against, all crash events are degraded to retrospective alert.
+> 2. **Cold Storage failure** — audit trail writes fail, next of kin and emergency service contact lookups fail, alert dispatch is blocked.
+>
+> **Known limitation:** No database replication, standby replica, or multi-region failover is implemented in this project. A database failure is a service-degrading event with no automatic recovery path beyond restoring the primary instance. See Known Limitations at the end of this flow.
+
+### Monitoring Stack Detects Database Failure
+
+```
+[Prometheus] → [Database — Hot Storage]            : /health endpoint scrape                                        : every 60 seconds
+[Prometheus] → [Database — Cold Storage]           : /health endpoint scrape                                        : every 60 seconds
+[Database] → [Prometheus]                          : no response                                                    : —
+[Prometheus] → [Alertmanager]                      : alert fired, database unreachable, storage layer, timestamp    : on health check failure threshold crossed
+[Alertmanager] → [PagerDuty]                       : database down, storage layer — hot or cold, timestamp          : immediately
+[PagerDuty] → [Infrastructure Engineer]            : page — database failure, storage layer, timestamp              : immediately via SMS and call
+```
+
+> See Flow 9A — Threshold Breach Detection for full monitoring chain.
+
+### Rider Notification
+
+```
+[Monitoring Infrastructure] → [AWS IoT Core]       : publish infra down status, helmet ID, timestamp               : once per active helmet, on failure confirmed
+[AWS IoT Core] → [Smartphone]                      : infra down status message                                      : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                         : "Alert system temporarily offline — emergency notifications paused" : immediately
+[Smartphone] → [Helmet HUD]                        : infra down status, helmet ID, timestamp                        : immediately via Bluetooth
+[Helmet HUD] → [Rider]                             : "Alert system temporarily offline — emergency notifications paused" : immediately
+```
+
+---
+
+### Hot Storage Failure
+
+#### Telemetry Behaviour During Outage
+
+```
+[Smartphone] → [AWS IoT Core]             : telemetry payload, helmet ID, timestamp                                 : every 10 seconds via helmet/{helmet_id}/telemetry topic
+[AWS IoT Core] → [Telemetry Infrastructure] : telemetry payload                                                     : immediately via IoT Core rules engine
+[Telemetry Infrastructure] → [Hot Storage] : batch payload, batch timestamp                                         : write fails — Hot Storage unavailable — batch dropped at write layer
+```
+
+> **Note:** Smartphone has no knowledge of Hot Storage failure and continues sending live telemetry normally. Telemetry Infra receives each batch but cannot write it — data is dropped at the write layer. No local buffering occurs on the smartphone side and no catch-up sync runs on recovery. Telemetry data sent during the outage is permanently lost.
+
+#### Crash Event Handling During Hot Storage Outage
+
+```
+[Telemetry Infrastructure] → [Telemetry Infrastructure] : inspect batch for crash flag                              : immediately — independent of Hot Storage write result
+[Telemetry Infrastructure] → [SQS Crash Queue] : crash event data point, helmet ID, timestamp                         : if crash flag found 
+[Processing Infrastructure] → [SQS Crash Queue] : read crash event data point                                         : event-driven
+[Processing Infrastructure] → [Hot Storage]    : query telemetry history for helmet ID                               : immediately
+[Hot Storage] → [Processing Infrastructure]    : no data found — storage unavailable                                 : immediately
+[Processing Infrastructure] → [SQS Alert Queue] : cannot validate — alert type — retrospective, helmet ID, crash timestamp, incident location from crash data point : immediately
+```
+
+> All crash events during a Hot Storage outage are degraded to retrospective regardless of how soon they are processed. Rider is presented with confirm or cancel on both devices. See Flow 4 — Retrospective Alert.
+
+#### On Hot Storage Recovery
+
+```
+[Prometheus] → [Database — Hot Storage]            : /health endpoint scrape                                        : every 60 seconds
+[Database — Hot Storage] → [Prometheus]            : health check passed                                            : on recovery
+[Prometheus] → [Alertmanager]                      : alert resolved, Hot Storage restored, timestamp                : immediately
+[Alertmanager] → [PagerDuty]                       : Hot Storage restored, timestamp                                : immediately
+[PagerDuty] → [Infrastructure Engineer]            : Hot Storage restored, timestamp                                : immediately
+[Monitoring Infrastructure] → [AWS IoT Core]       : publish infra restored status, helmet ID, timestamp            : once per active helmet, on recovery confirmed
+[AWS IoT Core] → [Smartphone]                      : infra restored status message                                   : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                         : "Alert system restored — emergency notifications operational"  : immediately
+[Smartphone] → [Helmet HUD]                        : infra restored status, helmet ID, timestamp                    : immediately via Bluetooth
+[Helmet HUD] → [Rider]                             : "Alert system restored — emergency notifications operational"  : immediately
+```
+
+> Normal writes resume for new batches; no catch-up runs for data dropped during the outage. SQS Crash Queue data points held during the outage are processed on recovery — events that find no corresponding history in Hot Storage (either because it was dropped during the outage or expired via TTL) are degraded to retrospective as normal.
+
+---
+
+### Cold Storage Failure
+
+#### Alert Dispatch Behaviour During Outage
+
+> Alerting Infrastructure looks up next of kin and emergency service contact details from Cold Storage at alert dispatch time. If Cold Storage is unavailable, that lookup fails and the alert cannot be sent.
+
+```
+[Alerting Infrastructure] → [SQS Alert Queue]      : read alert event data point                                     : event-driven
+[Alerting Infrastructure] → [Cold Storage]         : look up next of kin contact details, helmet ID                 : immediately on read
+[Cold Storage] → [Alerting Infrastructure]         : no response — Cold Storage unavailable                          : —
+[Alerting Infrastructure] → [Alerting Infrastructure] : contact lookup failed — alert cannot be dispatched, retain event in queue : immediately
+```
+
+> SQS Alert Queue 14-day retention holds all undelivered events. On Cold Storage recovery, Alerting Infrastructure drains the queue and dispatches.
+
+#### Audit Trail Write Failures During Outage
+
+> All cold storage writes — incident records, false positive logs, cancellation records, delivery logs — fail during the outage.
+
+```
+[Alerting Infrastructure] → [Cold Storage]         : incident record write — fails, Cold Storage unavailable          : on each resolution attempt during outage
+```
+
+> **Note:** This is a permanent audit trail gap for the duration of the outage. There is no replay mechanism for cold storage writes in this design.
+
+#### On Cold Storage Recovery
+
+```
+[Prometheus] → [Database — Cold Storage]           : /health endpoint scrape                                        : every 60 seconds
+[Database — Cold Storage] → [Prometheus]            : health check passed                                            : on recovery
+[Prometheus] → [Alertmanager]                      : alert resolved, Cold Storage restored, timestamp               : immediately
+[Alertmanager] → [PagerDuty]                       : Cold Storage restored, timestamp                               : immediately
+[PagerDuty] → [Infrastructure Engineer]            : Cold Storage restored, timestamp                               : immediately
+[Monitoring Infrastructure] → [AWS IoT Core]       : publish infra restored status, helmet ID, timestamp            : once per active helmet, on recovery confirmed
+[AWS IoT Core] → [Smartphone]                      : infra restored status message                                   : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                         : "Alert system restored — emergency notifications operational"  : immediately
+[Smartphone] → [Helmet HUD]                        : infra restored status, helmet ID, timestamp                    : immediately via Bluetooth
+[Helmet HUD] → [Rider]                             : "Alert system restored — emergency notifications operational"  : immediately
+```
+
+> SQS Alert Queue drains on recovery. Contact lookups succeed. Alert dispatch resumes. Audit trail writes resume for all new events — events that failed to write during the outage are not recovered.
+
+---
+
+### Known Limitations
+
+#### No replication or standby replica
+Both Hot Storage and Cold Storage run as single instances in this project. A database failure has no automatic failover path. Recovery depends on the engineer restoring the primary instance. For a production deployment, a read replica or standby instance would allow automatic promotion on failure, reducing downtime from minutes to seconds.
+
+#### Audit trail gap on Cold Storage failure
+Cold storage writes that fail during an outage are permanently lost. There is no write-ahead log or replay buffer on the application side. In a production deployment, a durable write-ahead log (e.g. writing to an SQS queue first and draining to cold storage) would eliminate this gap.
+
+#### Telemetry data loss during Hot Storage failure
+Because the smartphone sends live telemetry fire-and-forget with no per-batch ack, it has no knowledge of Hot Storage write failures. Data sent during the outage is dropped at the write layer with no recovery path. Unlike Telemetry Infrastructure failure — where the smartphone cannot reach the service and therefore buffers locally — Hot Storage failure is invisible to the device layer. This is a known, accepted limitation for a portfolio project. A production deployment could mitigate this by having Telemetry Infrastructure buffer failed writes internally with a retry queue.
+
+#### All crash events degraded to retrospective during Hot Storage failure
+The retrospective alert mechanic depends on rider availability. If the rider is unreachable, no alert fires. A production deployment could mitigate this with a caching layer (e.g. ElastiCache) that holds a short window of recent telemetry in memory, allowing Branch A validation even during a brief Hot Storage outage.
+
+#### Multi-region redundancy out of scope
+No multi-region or cross-AZ database strategy is implemented. A regional outage affecting the database would take the alert system down entirely. This is a known, accepted limitation for a portfolio project.
+
+
+---
+
+## Flow 9I — Database Failure (Cloud Layer)
+
+> **Precondition:** All other infrastructure components are operational. One or both database layers — Hot Storage or Cold Storage — become unavailable.
+>
+> **Two failure modes are covered in this flow:**
+> 1. **Hot Storage failure** — telemetry writes fail, crash validation has no history to work against, all crash events are degraded to retrospective alert.
+> 2. **Cold Storage failure** — audit trail writes fail, next of kin and emergency service contact lookups fail, alert dispatch is blocked.
+>
+> **Known limitation:** No database replication, standby replica, or multi-region failover is implemented in this project. A database failure is a service-degrading event with no automatic recovery path beyond restoring the primary instance. See Known Limitations at the end of this flow.
+
+### Monitoring Stack Detects Database Failure
+
+```
+[Prometheus] → [Database — Hot Storage]            : /health endpoint scrape                                        : every 60 seconds
+[Prometheus] → [Database — Cold Storage]           : /health endpoint scrape                                        : every 60 seconds
+[Database] → [Prometheus]                          : no response                                                    : —
+[Prometheus] → [Alertmanager]                      : alert fired, database unreachable, storage layer, timestamp    : on health check failure threshold crossed
+[Alertmanager] → [PagerDuty]                       : database down, storage layer — hot or cold, timestamp          : immediately
+[PagerDuty] → [Infrastructure Engineer]            : page — database failure, storage layer, timestamp              : immediately via SMS and call
+```
+
+> See Flow 9A — Threshold Breach Detection for full monitoring chain.
+
+### Rider Notification
+
+```
+[Monitoring Infrastructure] → [AWS IoT Core]       : publish infra down status, helmet ID, timestamp               : once per active helmet, on failure confirmed
+[AWS IoT Core] → [Smartphone]                      : infra down status message                                      : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                         : "Alert system temporarily offline — emergency notifications paused" : immediately
+[Smartphone] → [Helmet HUD]                        : infra down status, helmet ID, timestamp                        : immediately via Bluetooth
+[Helmet HUD] → [Rider]                             : "Alert system temporarily offline — emergency notifications paused" : immediately
+```
+
+---
+
+### Hot Storage Failure
+
+#### Telemetry Behaviour During Outage
+
+```
+[Smartphone] → [AWS IoT Core]             : telemetry payload, helmet ID, timestamp                                 : every 10 seconds via helmet/{helmet_id}/telemetry topic
+[AWS IoT Core] → [Telemetry Infrastructure] : telemetry payload                                                     : immediately via IoT Core rules engine
+[Telemetry Infrastructure] → [Hot Storage] : batch payload, batch timestamp                                         : write fails — Hot Storage unavailable — batch dropped at write layer
+```
+
+> **Note:** Smartphone has no knowledge of Hot Storage failure and continues sending live telemetry normally. Telemetry Infra receives each batch but cannot write it — data is dropped at the write layer. No local buffering occurs on the smartphone side and no catch-up sync runs on recovery. Telemetry data sent during the outage is permanently lost.
+
+#### Crash Event Handling During Hot Storage Outage
+
+```
+[Telemetry Infrastructure] → [Telemetry Infrastructure] : inspect batch for crash flag                              : immediately — independent of Hot Storage write result
+[Telemetry Infrastructure] → [SQS Crash Queue] : crash event data point, helmet ID, timestamp                         : if crash flag found 
+[Processing Infrastructure] → [SQS Crash Queue] : read crash event data point                                         : event-driven
+[Processing Infrastructure] → [Hot Storage]    : query telemetry history for helmet ID                               : immediately
+[Hot Storage] → [Processing Infrastructure]    : no data found — storage unavailable                                 : immediately
+[Processing Infrastructure] → [SQS Alert Queue] : cannot validate — alert type — retrospective, helmet ID, crash timestamp, incident location from crash data point : immediately
+```
+
+> All crash events during a Hot Storage outage are degraded to retrospective regardless of how soon they are processed. Rider is presented with confirm or cancel on both devices. See Flow 4 — Retrospective Alert.
+
+#### On Hot Storage Recovery
+
+```
+[Prometheus] → [Database — Hot Storage]            : /health endpoint scrape                                        : every 60 seconds
+[Database — Hot Storage] → [Prometheus]            : health check passed                                            : on recovery
+[Prometheus] → [Alertmanager]                      : alert resolved, Hot Storage restored, timestamp                : immediately
+[Alertmanager] → [PagerDuty]                       : Hot Storage restored, timestamp                                : immediately
+[PagerDuty] → [Infrastructure Engineer]            : Hot Storage restored, timestamp                                : immediately
+[Monitoring Infrastructure] → [AWS IoT Core]       : publish infra restored status, helmet ID, timestamp            : once per active helmet, on recovery confirmed
+[AWS IoT Core] → [Smartphone]                      : infra restored status message                                   : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                         : "Alert system restored — emergency notifications operational"  : immediately
+[Smartphone] → [Helmet HUD]                        : infra restored status, helmet ID, timestamp                    : immediately via Bluetooth
+[Helmet HUD] → [Rider]                             : "Alert system restored — emergency notifications operational"  : immediately
+```
+
+> Normal writes resume for new batches; no catch-up runs for data dropped during the outage. SQS Crash Queue data points held during the outage are processed on recovery — events that find no corresponding history in Hot Storage (either because it was dropped during the outage or expired via TTL) are degraded to retrospective as normal.
+
+---
+
+### Cold Storage Failure
+
+#### Alert Dispatch Behaviour During Outage
+
+> Alerting Infrastructure looks up next of kin and emergency service contact details from Cold Storage at alert dispatch time. If Cold Storage is unavailable, that lookup fails and the alert cannot be sent.
+
+```
+[Alerting Infrastructure] → [SQS Alert Queue]      : read alert event data point                                     : event-driven
+[Alerting Infrastructure] → [Cold Storage]         : look up next of kin contact details, helmet ID                 : immediately on read
+[Cold Storage] → [Alerting Infrastructure]         : no response — Cold Storage unavailable                          : —
+[Alerting Infrastructure] → [Alerting Infrastructure] : contact lookup failed — alert cannot be dispatched, retain event in queue : immediately
+```
+
+> SQS Alert Queue 14-day retention holds all undelivered events. On Cold Storage recovery, Alerting Infrastructure drains the queue and dispatches.
+
+#### Audit Trail Write Failures During Outage
+
+> All cold storage writes — incident records, false positive logs, cancellation records, delivery logs — fail during the outage.
+
+```
+[Alerting Infrastructure] → [Cold Storage]         : incident record write — fails, Cold Storage unavailable          : on each resolution attempt during outage
+```
+
+> **Note:** This is a permanent audit trail gap for the duration of the outage. There is no replay mechanism for cold storage writes in this design.
+
+#### On Cold Storage Recovery
+
+```
+[Prometheus] → [Database — Cold Storage]           : /health endpoint scrape                                        : every 60 seconds
+[Database — Cold Storage] → [Prometheus]            : health check passed                                            : on recovery
+[Prometheus] → [Alertmanager]                      : alert resolved, Cold Storage restored, timestamp               : immediately
+[Alertmanager] → [PagerDuty]                       : Cold Storage restored, timestamp                               : immediately
+[PagerDuty] → [Infrastructure Engineer]            : Cold Storage restored, timestamp                               : immediately
+[Monitoring Infrastructure] → [AWS IoT Core]       : publish infra restored status, helmet ID, timestamp            : once per active helmet, on recovery confirmed
+[AWS IoT Core] → [Smartphone]                      : infra restored status message                                   : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                         : "Alert system restored — emergency notifications operational"  : immediately
+[Smartphone] → [Helmet HUD]                        : infra restored status, helmet ID, timestamp                    : immediately via Bluetooth
+[Helmet HUD] → [Rider]                             : "Alert system restored — emergency notifications operational"  : immediately
+```
+
+> SQS Alert Queue drains on recovery. Contact lookups succeed. Alert dispatch resumes. Audit trail writes resume for all new events — events that failed to write during the outage are not recovered.
+
+---
+
+### Known Limitations
+
+#### No replication or standby replica
+Both Hot Storage and Cold Storage run as single instances in this project. A database failure has no automatic failover path. Recovery depends on the engineer restoring the primary instance. For a production deployment, a read replica or standby instance would allow automatic promotion on failure, reducing downtime from minutes to seconds.
+
+#### Audit trail gap on Cold Storage failure
+Cold storage writes that fail during an outage are permanently lost. There is no write-ahead log or replay buffer on the application side. In a production deployment, a durable write-ahead log (e.g. writing to an SQS queue first and draining to cold storage) would eliminate this gap.
+
+#### Telemetry data loss during Hot Storage failure
+Because the smartphone sends live telemetry fire-and-forget with no per-batch ack, it has no knowledge of Hot Storage write failures. Data sent during the outage is dropped at the write layer with no recovery path. Unlike Telemetry Infrastructure failure — where the smartphone cannot reach the service and therefore buffers locally — Hot Storage failure is invisible to the device layer. This is a known, accepted limitation for a portfolio project. A production deployment could mitigate this by having Telemetry Infrastructure buffer failed writes internally with a retry queue.
+
+#### All crash events degraded to retrospective during Hot Storage failure
+The retrospective alert mechanic depends on rider availability. If the rider is unreachable, no alert fires. A production deployment could mitigate this with a caching layer (e.g. ElastiCache) that holds a short window of recent telemetry in memory, allowing Branch A validation even during a brief Hot Storage outage.
+
+#### Multi-region redundancy out of scope
+No multi-region or cross-AZ database strategy is implemented. A regional outage affecting the database would take the alert system down entirely. This is a known, accepted limitation for a portfolio project.
+

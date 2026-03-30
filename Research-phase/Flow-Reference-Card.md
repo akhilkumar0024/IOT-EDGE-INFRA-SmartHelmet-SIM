@@ -356,6 +356,44 @@
 
 ---
 
+## Flow 9H — Alerting Infrastructure Failure
+
+**Precondition:** Processing Infra up. Alerting Infra down.
+
+- Confirmed crash data points → **SQS Alert Queue** (accumulate unread).
+- 14-day SQS retention ensures no data loss.
+- Rider notified via `infra/status`: emergency notifications paused.
+- No alerts dispatched during outage. No per-crash notification sent.
+
+**On recovery:**
+- SQS Alert Queue is drained. Step Functions resume interactive logic (countdown/override).
+- Alert type determination runs at read time (Flow 3).
+
+---
+
+## Flow 9I — Database Failure (Cloud Layer)
+
+**Precondition:** One or both DB layers (Hot/Cold) down.
+
+**Hot Storage failure (Silent to device):**
+- Smartphone continues sending live telemetry batches (fire-and-forget).
+- Telemetry Infra receives data but cannot write → **data dropped at write layer**.
+- SQS Crash Queue *still* gets crash data point (written independently).
+- Processing Infra reads crash event → queries Hot Storage → finds no data → **degrades to retrospective alert** (confirm/cancel prompt to rider).
+- On recovery: normal writes resume. No catch-up sync for lost telemetry.
+
+**Cold Storage failure (Blocks dispatch):**
+- Alerting Infra cannot look up Next of Kin or Emergency contacts → **dispatch blocked**.
+- Confirmed alerts (data points) buffer in SQS Alert Queue.
+- **Audit trail gap:** all logs/records fail and are permanently lost during outage.
+
+**Key decisions:**
+- Hot Storage failure is invisible to the device layer (no local buffering on smartphone).
+- Cold Storage failure results in a permanent loss of audit trail logs (known limitation).
+
+
+---
+
 ## SQS Queue Summary (Quick Reference)
 
 | Queue | Source | Consumer | Retention | Purpose |
@@ -382,4 +420,4 @@
 ---
 
 *Reference card version: Post-Alerting-Decoupling*
-*Last updated: 2026-03-29*
+*Last updated: 2026-03-30*
