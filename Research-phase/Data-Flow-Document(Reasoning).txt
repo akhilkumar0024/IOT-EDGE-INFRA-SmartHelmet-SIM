@@ -399,3 +399,16 @@ happens
 
 the limtations in this project are we dont do any post rollout health checks on the working of the helmet or  behavioural anomaly detection 
 
+Flow 9L - Bad Infrastructure Deploy
+The bad infrastructure deploy here means the follwing creation of infra fails due to many reasons like bad configurations, permissions
+in the terraform 
+there can be deploy time falures like some resources get deployed but some dont like a queue might be created but s3 bucket isnt created 
+
+There can also be configuration problems like a faulty Security Group that prevents data on port 8080 etc so reources are created but the
+data dosent flow needing to understand the data flow in such a scenarion etc 
+
+we can ensure that before the terraform apply event takes place terrform validate and terraform Plan are run so syntax errors are caught early
+
+for the Application level(ECS) even rolling update will suffice, the firmware update is handled by AWS IOT device manager 
+
+there is a need to define health checks for the resources at the infra layer(Terraform code) for the health check of the resources

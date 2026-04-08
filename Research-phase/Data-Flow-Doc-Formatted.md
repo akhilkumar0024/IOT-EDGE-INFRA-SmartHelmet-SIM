@@ -2803,3 +2803,126 @@ The rollback delivery path runs through IoT Core → Smartphone → Helmet. If I
 
 #### Observation window anomaly detection relies on normal telemetry pipeline
 Behavioural anomaly detection (Branch B) requires the full telemetry pipeline to be operational — Telemetry Infrastructure must be writing crash data points to SQS Crash Queue, and Processing Infrastructure must be reading them. If either service is down during the canary observation window, anomalies may not be detected until the services recover, by which time the observation window may have passed and full fleet rollout may have been triggered.
+
+---
+
+## Flow 9L — Bad Infrastructure Deploy (CI/CD Pipeline)
+
+> **Precondition:** The Infrastructure Engineer is rolling out an update via the CI/CD pipeline (e.g., GitHub Actions). The update involves both Infrastructure Code (Terraform) and Application Code (ECS Docker Image).
+>
+> **Monorepo setup:** The repository places Infrastructure Code (`/infrastructure`) and Application Code (`/application`) in separate directories. Path filtering in CI/CD ensures that changes to one don't unnecessarily trigger builds in the other.
+>
+> **Three failure stages are defined:**
+> - **Stage 1 (Pre-Deploy):** Caught by the CI/CD pipeline before any AWS resources are touched.
+> - **Stage 2 (Deploy-Time):** Terraform apply fails halfway through.
+> - **Stage 3 (Post-Deploy Application Failure):** Terraform succeeds, but the new Application container has a bad configuration and fails to start natively within AWS.
+>
+> **Safety mechanisms used:**
+> - **Terraform Validation:** `terraform validate` and `terraform plan` run in CI/CD.
+> - **Rolling Updates:** Used for ECS Fargate Application deployments. ECS does not kill the old stable task until the new task passes its `/health` check.
+
+---
+
+### Stage 1 — Pre-Deploy Failure (The Gatekeeper)
+
+> Developer pushes a commit with a syntax error in Terraform (e.g., missing bracket or invalid parameter).
+
+```
+[Infrastructure Engineer] → [GitHub Repo]                      : git push with syntax error                                : on local commit
+[GitHub Actions CI/CD] → [GitHub Repo]                         : checkout code                                             : on push trigger
+[GitHub Actions CI/CD] → [Terraform]                           : run `terraform validate`                                  : immediately
+[Terraform] → [GitHub Actions CI/CD]                           : syntax error, exit code 1                                 : immediately
+[GitHub Actions CI/CD] → [Infrastructure Engineer]             : pipeline failed notification, build log                   : immediately via Slack/Email
+```
+
+> **Result:** No AWS resources are touched. The "Stable Infra" in AWS remains unmodified. The Engineer fixes the syntax locally and pushes a new commit.
+
+---
+
+### Stage 2 — Deploy-Time Failure (The Lockout)
+
+> Developer pushes structurally valid Terraform code, but it fails during `terraform apply` (e.g., AWS service quota reached, or IAM permission denied).
+
+```
+[Infrastructure Engineer] → [GitHub Repo]                      : git push with valid syntax but invalid permissions        : on local commit
+[GitHub Actions CI/CD] → [Terraform]                           : run `terraform validate` + `terraform plan`               : completes successfully
+[GitHub Actions CI/CD] → [Terraform]                           : run `terraform apply`                                     : begins modifying AWS resources
+[AWS IAM / Service Quota] → [Terraform]                        : permission denied / quota exceeded error                  : during resource creation
+[Terraform] → [S3 / DynamoDB]                                  : write partial state file, release lock                    : immediately
+[Terraform] → [GitHub Actions CI/CD]                           : apply failed, exit code 1                                 : immediately
+[GitHub Actions CI/CD] → [Infrastructure Engineer]             : pipeline failed notification, build log                   : immediately via Slack/Email
+```
+
+> **Result:** The infrastructure is in a "half-baked" state (e.g., SQS Queue was created, but IoT Rule was denied).
+> 
+> **Recovery:** The Infrastructure Engineer uses `git revert <bad_commit>` to restore the repository to the previously known "Stable" state. The CI/CD pipeline automatically runs `terraform apply` on this reverted commit, which destroys the half-baked resources and returns the AWS environment to its stable baseline.
+
+---
+
+### Stage 3 — Post-Deploy Application Failure (The Silent Killer Caught by ECS)
+
+> The Infrastructure code deploys successfully. A new Application container (e.g., Telemetry Infrastructure) is deployed to ECS, but it contains a bad configuration (e.g., it listens on the wrong port, or crashes immediately on startup).
+> 
+> **CRITICAL:** Data loss is prevented here primarily by ECS's native **Rolling Update** deployment strategy combined with configured `/health` checks.
+
+```
+[GitHub Actions CI/CD] → [AWS ECS]                             : deploy new `Telemetry Infrastructure` task definition (v2) : on successful pipeline
+[AWS ECS] → [AWS ECS]                                          : start 1 new task (v2)                                     : deployment minimum healthy percent = 100%
+[AWS ECS] → [Telemetry Infrastructure v2]                      : ping `/health` endpoint                                   : according to configured interval
+[Telemetry Infrastructure v2] → [AWS ECS]                      : connection refused or process crashed                     : on health check
+[AWS ECS] → [AWS ECS]                                          : mark v2 task as UNHEALTHY                                 : after max timeout/retries
+[AWS ECS] → [AWS ECS]                                          : terminate v2 task, DO NOT terminate old v1 tasks          : immediately
+[AWS ECS] → [AWS ECS]                                          : retry launching new v2 task                               : ECS continuous reconciliation loop
+```
+
+> **Meanwhile (The Live System):**
+```
+[Smartphone] → [AWS IoT Core]                                  : live telemetry batches                                    : every 10 seconds
+[AWS IoT Core] → [Telemetry Infrastructure v1]                 : live telemetry batches                                    : via rules engine
+[Telemetry Infrastructure v1] → [Hot Storage]                  : write payloads normally                                   : business as usual
+```
+
+#### Monitoring and Resolution
+
+```
+[AWS ECS] → [CloudWatch]                                       : deployment state metric (failing to reach steady state)   : continuous event stream
+[CloudWatch] → [SNS]                                           : deployment failure alarm                                  : on threshold breached
+[SNS] → [PagerDuty]                                            : ECS deployment failing alert                              : immediately
+[PagerDuty] → [Infrastructure Engineer]                        : page — Telemetry Infrastructure v2 deployment failing     : immediately
+```
+
+> **Result:** "Zero Downtime." Despite a catastrophic bug in the new application container, live telemetry routing is unaffected because the old container (`v1`) was never killed. The Engineer issues a `git revert` on the application code branch, and CI/CD pushes a corrected container.
+
+---
+
+### SQS Safety Net During Successful Swaps (Queue-Consumer Services Only)
+
+> **Scope:** This safety net applies only to services that consume from SQS queues — **Processing Infrastructure** (reads from SQS Crash Queue and SQS LWT Queue) and **Alerting Infrastructure** (reads from SQS Alert Queue). It does NOT apply to **Telemetry Infrastructure**, which has no queue between itself and IoT Core. Telemetry Infra's protection during a swap is the rolling update itself keeping `v1` alive (see Known Limitations below).
+
+```
+[AWS ECS] → [Processing Infrastructure v1]                     : SIGTERM signal sent                                       : on v2 passing health check
+[Processing Infrastructure v1] → [Processing Infrastructure v1]: finish processing current crash event message             : within 30s grace period
+[Processing Infrastructure v1] → [SQS Crash Queue]             : acknowledge (delete) processed message                    : immediately
+[Processing Infrastructure v1] → [AWS ECS]                     : exit complete                                             : on shutdown
+[Telemetry Infrastructure v1] → [SQS Crash Queue]              : write new crash events                                    : continuous — v1 still alive and receiving IoT Core pushes
+[SQS Crash Queue] → [SQS Crash Queue]                          : hold new messages during consumer gap                     : briefly during Processing Infra task swap
+[AWS ECS] → [Processing Infrastructure v2]                     : start task, bind to queue                                 : immediately on v1 exit
+[Processing Infrastructure v2] → [SQS Crash Queue]             : read piled-up messages                                    : on steady state
+```
+
+> **Result:** No crash flags are lost during a Processing or Alerting Infrastructure deployment. SQS acts as a shock absorber. If `v1` died unexpectedly without acknowledging a message, SQS makes that message visible again after the Visibility Timeout (configurable, e.g. 30 seconds), and `v2` reprocesses it.
+
+---
+
+### Known Limitations
+
+#### No Queue Buffer Between IoT Core and Telemetry Infrastructure
+Telemetry Infrastructure receives data directly from the IoT Core rules engine — there is no SQS queue between them. During a Telemetry Infrastructure rolling update, the rolling update itself is the sole protection: `minimum_healthy_percent = 100%` keeps `v1` alive until `v2` passes its health check. If `v1` crashes unexpectedly during a swap (not a clean shutdown), telemetry data in transit from IoT Core at that exact moment could be lost. 
+>
+> Adding an SQS Telemetry Queue between IoT Core and Telemetry Infrastructure would close this gap but is a meaningful architectural change (new queue, Telemetry Infra becomes a queue consumer, IoT Core rules engine writes to queue). Marked as a Future Enhancement — the Smartphone buffer already handles Telemetry Infra outages at the device layer (Flows 2B, 9F).
+
+#### Database Migrations
+This flow protects stateless ECS services. It does not map logic for a "Bad Database Migration" (e.g., dropping a critical column in Hot Storage). Database schema state failures are significantly harder to roll back than stateless application containers and would require restoring from snapshots, causing downtime that rolling updates cannot cover.
+
+#### Misconfigured Health Check Path
+If the Infrastructure Engineer makes a typo in the Terraform configuration for the ECS health check path (e.g., configures `/helt` instead of `/health`), even a perfectly good container will be marked UNHEALTHY by ECS because the health ping fails. ECS will infinitely cycle trying to boot the container, confusing the source of the error.
