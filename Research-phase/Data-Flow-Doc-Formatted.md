@@ -2545,3 +2545,74 @@ Implement cloud-side monitoring of "Average Buffer Depth" across the fleet. If a
 To eliminate the audit trail gap during Cold Storage failures, implement a durable write-ahead log. All logs would be written to a dedicated SQS "Log Queue" first, with a consumer service responsible for draining them into Cold Storage once the database is healthy.
 
 
+### Flow 9J — Parameter Store Unavailability (Config Layer)
+
+#### Parameter Store Cache Miss (During Refresh Cycle)
+
+```
+[Processing Infrastructure] → [AWS Parameter Store]      : fetch mass alert threshold, crash confirmation threshold        : every 5 minutes (cache refresh)
+[AWS Parameter Store] → [Processing Infrastructure]      : no response — Parameter Store unavailable                       : —
+[Processing Infrastructure] → [Processing Infrastructure] : cache refresh failed — retain last known values, continue operating : immediately
+```
+
+```
+[Alerting Infrastructure] → [AWS Parameter Store]        : fetch standard alert threshold                                  : every 5 minutes (cache refresh)
+[AWS Parameter Store] → [Alerting Infrastructure]        : no response — Parameter Store unavailable                       : —
+[Alerting Infrastructure] → [Alerting Infrastructure]    : cache refresh failed — retain last known values, continue operating : immediately
+```
+
+```
+[Telemetry Infrastructure] → [AWS Parameter Store]       : fetch TTL value                                                 : every 5 minutes (cache refresh)
+[AWS Parameter Store] → [Telemetry Infrastructure]       : no response — Parameter Store unavailable                       : —
+[Telemetry Infrastructure] → [Telemetry Infrastructure]  : cache refresh failed — retain last known values, continue operating : immediately
+```
+
+#### Service Restart During Outage (Cold Start Fallback)
+
+```
+[Processing Infrastructure] → [AWS Parameter Store]      : fetch mass alert threshold, crash confirmation threshold        : on service restart during outage
+[AWS Parameter Store] → [Processing Infrastructure]      : no response — Parameter Store unavailable                       : —
+[Processing Infrastructure] → [Processing Infrastructure] : SSM fetch failed — load hardcoded default values, continue operating : immediately
+```
+
+> Same cold start fallback applies to Alerting Infrastructure and Telemetry Infrastructure independently. Each service loads its own hardcoded defaults and continues operating. No service blocks on Parameter Store availability.
+
+#### Monitoring and Engineer Alert
+
+```
+[Prometheus] → [AWS Parameter Store]                     : /health endpoint scrape                                         : every 60 seconds
+[AWS Parameter Store] → [Prometheus]                     : no response — Parameter Store unavailable                       : —
+[Prometheus] → [Alertmanager]                            : Parameter Store unavailable, timestamp                          : immediately
+[Alertmanager] → [PagerDuty]                             : Parameter Store unavailable, timestamp                          : immediately
+[PagerDuty] → [Infrastructure Engineer]                  : Parameter Store unavailable, timestamp                          : immediately
+```
+
+#### Rider Notification
+
+```
+[Monitoring Infrastructure] → [AWS IoT Core]             : publish degraded status, helmet ID, timestamp                   : once per active helmet, on outage confirmed
+[AWS IoT Core] → [Smartphone]                            : degraded status message                                         : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                               : "Systems operational — caution advised while riding"            : immediately
+[Smartphone] → [Helmet HUD]                              : degraded status, helmet ID, timestamp                           : immediately via Bluetooth
+[Helmet HUD] → [Rider]                                   : "Systems operational — caution advised while riding"            : immediately
+```
+
+#### On Parameter Store Recovery
+
+```
+[Prometheus] → [AWS Parameter Store]                     : /health endpoint scrape                                         : every 60 seconds
+[AWS Parameter Store] → [Prometheus]                     : health check passed                                             : on recovery
+[Prometheus] → [Alertmanager]                            : alert resolved, Parameter Store restored, timestamp             : immediately
+[Alertmanager] → [PagerDuty]                             : Parameter Store restored, timestamp                             : immediately
+[PagerDuty] → [Infrastructure Engineer]                  : Parameter Store restored, timestamp                             : immediately
+[Processing Infrastructure] → [AWS Parameter Store]      : fetch mass alert threshold, crash confirmation threshold        : on next 5-minute cache refresh
+[Alerting Infrastructure] → [AWS Parameter Store]        : fetch standard alert threshold                                  : on next 5-minute cache refresh
+[Telemetry Infrastructure] → [AWS Parameter Store]       : fetch TTL value                                                 : on next 5-minute cache refresh
+[Monitoring Infrastructure] → [AWS IoT Core]             : publish systems restored status, helmet ID, timestamp           : once per active helmet, on recovery confirmed
+[AWS IoT Core] → [Smartphone]                            : systems restored status message                                 : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                               : "Systems fully operational"                                     : immediately
+[Smartphone] → [Helmet HUD]                              : systems restored status, helmet ID, timestamp                   : immediately via Bluetooth
+[Helmet HUD] → [Rider]                                   : "Systems fully operational"                                     : immediately
+```
+
+> All services resume reading live Parameter Store values on their next cache refresh cycle. No manual intervention or redeployment required. Services that were running on hardcoded defaults during a cold start will also pick up live values on their next refresh — the hardcoded defaults are a one-time fallback, not a permanent override.

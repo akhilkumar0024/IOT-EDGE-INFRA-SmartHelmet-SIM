@@ -379,3 +379,10 @@ hence the alert functions will not be available, suffice to say we can show the 
 
 The database failures can be handled by having a replica on standby and in case of failure we can switch to the replica
 The monitoring infra will be responsible for handling the health of the databases and informing the engineer 
+
+Flow 9J — Parameter Store Unavailability
+Parameter store is where we will be soring the values/changing the values of various parameters like the ttl, crash threshold, mass failure threshold
+etc if the parameter store becomes unavailable then the entire calculation will fall apart hence it is necessary to have a default value to fall back to
+if the parameter store is unavailable the default values will be used for the calculations and the monitoring infra will alert the engineer about the failure
+of the parameter store the user need not know maybe its better to show that systems are operational but degraded a generic warning but different that 
+while systems are operational caution is advised while riding, also the alert should be sent to the engineer to fix the issue
