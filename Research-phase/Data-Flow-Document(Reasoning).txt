@@ -412,3 +412,9 @@ we can ensure that before the terraform apply event takes place terrform validat
 for the Application level(ECS) even rolling update will suffice, the firmware update is handled by AWS IOT device manager 
 
 there is a need to define health checks for the resources at the infra layer(Terraform code) for the health check of the resources
+
+Flow 9M- Monitoring Stack Failure (Dead Man's Hand)
+The monitoring stack consists of Prometheus Graffana Alertmanager constitute the monitoring stack together they monitor the health of the cloud Infra
+like the IOT Core, Telemetry Infra,Processing Infra, Alerting Infra and the Database if the monitoring infra itself goes down then there will be no alerts that will be sent to 
+anyone regarding the status of the infra so its is necessary to have a system in place that continously monitors the monitoring stack that checks the health of nothing 
+but the monitoring stack if it detects a failure of the monitoring stack the infrastructure engineer will be informed 

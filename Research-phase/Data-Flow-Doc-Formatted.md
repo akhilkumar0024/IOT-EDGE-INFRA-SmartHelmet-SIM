@@ -2769,3 +2769,76 @@ This flow protects stateless ECS services. It does not map logic for a "Bad Data
 
 #### Misconfigured Health Check Path
 If the Infrastructure Engineer makes a typo in the Terraform configuration for the ECS health check path (e.g., configures `/helt` instead of `/health`), even a perfectly good container will be marked UNHEALTHY by ECS because the health ping fails. ECS will infinitely cycle trying to boot the container, confusing the source of the error.
+
+---
+
+## Flow 9M — Monitoring Stack Failure (Observability Layer)
+
+> **Precondition:** The AWS ECS cluster hosting the Monitoring Stack (Prometheus, Alertmanager, Grafana) experiences a catastrophic out-of-memory error, network isolation, or is accidentally deleted via a bad Terraform apply.
+>
+> **The Problem:** The system designed to alert the Infrastructure Engineer to failures is itself dead. This is a "Silent Failure" state — telemetry processes normally, but if a separate failure occurs inside AWS during this window, no alerts will be routed to PagerDuty.
+>
+> **The Solution (Dead Man's Switch):** An external 3rd-party uptime service (e.g., Healthchecks.io, UptimeRobot, or native PagerDuty heartbeats) is configured to expect a continuous heartbeat from the AWS environment. The alerting boundary stops at this 3rd-party service to prevent infinite loops of watchers watching watchers.
+>
+> **Grace Period:** The external service is configured with a 1-minute expected heartbeat interval and a 5-minute grace period. If 6 minutes pass without a ping, it triggers a PagerDuty incident directly from outside AWS.
+
+---
+
+### The Healthy Heartbeat State
+
+> During normal operations, Prometheus proves the alerting pipeline is healthy by successfully routing a heartbeat through Alertmanager to the external internet.
+
+```
+[Prometheus] → [Alertmanager]                                  : generate synthetic `Watchdog` alert                       : continuous
+[Alertmanager] → [Healthchecks.io]                             : HTTP GET request (heartbeat ping)                         : every 1 minute
+[Healthchecks.io] → [Healthchecks.io]                          : record ping, reset 5-minute grace period timer            : immediately
+```
+
+> **Result:** The system is known to be healthy. The external service remains quiet.
+
+---
+
+### Monitoring Stack Failure & Alert Trigger
+
+> The Monitoring ECS cluster crashes. The 1-minute heartbeats cease.
+
+```
+[AWS ECS] → [Prometheus/Alertmanager]                          : container crash / cluster down                            : unexpected event
+[Alertmanager] → [Healthchecks.io]                             : HTTP GET request (heartbeat ping)                         : FAILS (stops sending)
+[Healthchecks.io] → [Healthchecks.io]                          : 1 minute passes, 5-minute grace period begins             : on missed ping
+[Healthchecks.io] → [Healthchecks.io]                          : grace period expires (6 minutes total silence)            : on timer expiry
+[Healthchecks.io] → [PagerDuty]                                : CRITICAL — Dead Man's Switch Triggered                    : immediately
+[PagerDuty] → [Infrastructure Engineer]                        : page — Monitoring Stack Down (Dead Man's Switch)          : immediately via SMS and call
+```
+
+> **Result:** The Infrastructure Engineer is alerted to the silent failure state without relying on any internal AWS alerting infrastructure.
+>
+> **Impact on Telemetry:** Zero. Helmet crash detection, SQS queues, and database writes continue to function perfectly. The system is "flying blind," but the core application is not degraded.
+
+---
+
+### Recovery and Auto-Resolution
+
+> The Infrastructure Engineer investigates the AWS console, identifies the failure (e.g., out-of-memory error), and restarts the ECS tasks or reverts the bad Terraform commit.
+
+```
+[Infrastructure Engineer] → [AWS ECS]                          : restart Monitoring tasks / fix config                     : manual intervention
+[AWS ECS] → [Prometheus/Alertmanager]                          : containers boot successfully                              : on restart
+[Prometheus] → [Alertmanager]                                  : resume generating synthetic `Watchdog` alert              : immediately on boot
+[Alertmanager] → [Healthchecks.io]                             : HTTP GET request (heartbeat ping)                         : successfully sent
+[Healthchecks.io] → [Healthchecks.io]                          : record ping, mark monitor as UP                           : immediately
+[Healthchecks.io] → [PagerDuty]                                : resolve CRITICAL — Dead Man's Switch Triggered            : immediately
+[PagerDuty] → [Infrastructure Engineer]                        : alert resolved notification                               : immediately
+```
+
+> **Result:** The alerting pipeline is verified healthy again. The Dead Man's Switch auto-resolves purely by receiving the ping.
+
+---
+
+### Known Limitations
+
+#### Blind Spot During the Outage
+If a secondary failure occurs (e.g., Hot Storage goes down) *while* the Monitoring Stack is dead, the Infrastructure Engineer will not receive an alert for the secondary failure. They will only know the monitoring stack is down. The secondary failure will only become visible during the engineer's manual investigation or after the monitoring stack is brought back online and begins scraping health endpoints again.
+
+#### Relying on a Single External Provider
+If Healthchecks.io itself experiences a global outage at the exact same moment  AWS infrastructure crashes, the Dead Man's Switch will not fire to PagerDuty. This is an accepted industry risk
