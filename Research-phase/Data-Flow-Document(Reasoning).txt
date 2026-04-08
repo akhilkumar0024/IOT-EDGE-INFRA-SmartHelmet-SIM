@@ -386,3 +386,16 @@ etc if the parameter store becomes unavailable then the entire calculation will 
 if the parameter store is unavailable the default values will be used for the calculations and the monitoring infra will alert the engineer about the failure
 of the parameter store the user need not know maybe its better to show that systems are operational but degraded a generic warning but different that 
 while systems are operational caution is advised while riding, also the alert should be sent to the engineer to fix the issue
+
+Flow 9K — Bad Firmware Update
+The firmaware update is resposible for rolling out new capabilities for the devices but incase an error occurs we need to roll back the devices to the previous 
+stable state 
+there can be two kinds of failures in update rollout the update itself causes an error other is the false telemetry due to bad code or faulty updates in case of the
+firmware update itself failing we can rely upon the canary deployment using the AWS IOT device Management to control out updates 
+
+in case of the false telemetry due to bad code or faulty updates we have to rely on the monitoring and mretics gnerated by the device to detect the failures , either way 
+in case of a bad update we can roll back to the previous stable state here in this case we rely upon a simple threshold value against crash flags sent by helmets when the update rollout
+happens 
+
+the limtations in this project are we dont do any post rollout health checks on the working of the helmet or  behavioural anomaly detection 
+

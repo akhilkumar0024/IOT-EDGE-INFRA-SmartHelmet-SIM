@@ -2616,3 +2616,190 @@ To eliminate the audit trail gap during Cold Storage failures, implement a durab
 ```
 
 > All services resume reading live Parameter Store values on their next cache refresh cycle. No manual intervention or redeployment required. Services that were running on hardcoded defaults during a cold start will also pick up live values on their next refresh — the hardcoded defaults are a one-time fallback, not a permanent override.
+
+---
+
+## Flow 9K — Bad Firmware Update (Config Layer)
+
+> **Precondition:** Fleet Manager is rolling out a new firmware version using AWS IoT Device Management. A canary rollout strategy is used — a defined percentage of the fleet receives the new firmware first. The remaining devices are held on the current stable version until the canary group passes a defined observation window.
+>
+> **Delivery path:** AWS IoT Device Management delivers firmware jobs to devices through AWS IoT Core → Smartphone → Helmet via Bluetooth. Helmet NEVER communicates directly with cloud — all install status reports travel back through Smartphone → IoT Core → Device Management.
+
+> **New MQTT topics introduced:**
+> - `helmet/{helmet_id}/firmware/update` — cloud-to-device firmware update packages, published by AWS IoT Device Management through IoT Core, subscribed by Smartphone, relayed to Helmet via Bluetooth.
+> - `helmet/{helmet_id}/firmware/status` — device-to-cloud install status reports, published by Smartphone on behalf of Helmet, routed to AWS IoT Device Management via IoT Core rules engine.
+> - Both topics provisioned in Terraform alongside all other MQTT topics.
+
+> **Firmware version field:** Embedded in every telemetry payload — the primary correlation mechanism for detecting anomalies tied to a specific firmware version. See Telemetry Batching Design in Project Context.
+>
+> **Two failure branches:** Branch A covers installation failure — the update process itself breaks on one or more devices. Branch B covers post-install behavioural anomaly — the update installs successfully but the firmware behaves incorrectly in the field, detected via abnormal crash flag rates correlated to the canary firmware version.
+>
+> **Response (both branches):** Halt the rollout to the remaining fleet, automatically roll back the canary group to the previous stable firmware version, and page the Fleet Manager. A device on a bad or partially installed firmware is more dangerous than a device on the previous stable release — restoring a known working state takes priority.
+>
+> **Firmware anomaly threshold:** Stored in Parameter Store. Processing Infrastructure watches the metric and triggers the halt — it does not need to understand why the anomaly occurred. Investigation is handled offline after the fleet is restored.
+>
+> **Cross-reference:** The existing Mass Alert Decision Logic (see Project Context) includes firmware version correlation as Step 2 of its decision tree. Flow 9K covers the firmware rollout lifecycle specifically — the mass alert decision tree handles the alert-side response to a fleet-wide anomaly after alerts have already been raised.
+
+---
+
+### Canary Rollout Initiation
+
+```
+[Fleet Manager] → [AWS IoT Device Management]          : initiate firmware rollout job, firmware version, observation window, canary percentage : on new firmware release
+[AWS IoT Device Management] → [Cold Storage]            : query canary group device IDs, current firmware version                : immediately
+[Cold Storage] → [AWS IoT Device Management]            : canary group device IDs, current firmware version                     : immediately
+[AWS IoT Device Management] → [AWS IoT Core]            : firmware update job, canary group device IDs, firmware package        : immediately
+[AWS IoT Core] → [Smartphone]                           : firmware update package, version identifier, helmet ID               : via helmet/{helmet_id}/firmware/update topic
+[Smartphone] → [Helmet — Canary Group]                  : firmware update package, version identifier                          : immediately via Bluetooth
+[Helmet — Canary Group] → [Helmet — Canary Group]       : install firmware update                                              : immediately on receiving package
+[Helmet — Canary Group] → [Smartphone]                  : install status report — success or failure, device ID, firmware version, timestamp : on install attempt
+[Smartphone] → [AWS IoT Core]                           : install status report, device ID, firmware version, timestamp        : immediately via helmet/{helmet_id}/firmware/status topic
+[AWS IoT Core] → [AWS IoT Device Management]            : install status report — success or failure, device ID, firmware version, timestamp : immediately via rules engine
+```
+
+> Fleet Manager owns the firmware pipeline and rollout strategy. Infrastructure Engineer is notified of failures but does not initiate or control firmware rollouts.
+
+---
+
+### Happy Path — Observation Window Passes
+
+```
+[AWS IoT Device Management] → [AWS IoT Device Management] : all canary group installs successful, start observation window timer : on all install success reports received
+[AWS IoT Device Management] → [AWS IoT Device Management] : observation window passed, no anomalies detected                   : on timer expiry with no halt signal received from Processing Infrastructure
+[AWS IoT Device Management] → [AWS IoT Core]            : firmware update job, remaining fleet device IDs, firmware package    : immediately
+[AWS IoT Core] → [Smartphone]                           : firmware update package, version identifier, helmet ID               : via helmet/{helmet_id}/firmware/update topic
+[Smartphone] → [Helmet — Remaining Fleet]               : firmware update package, version identifier                          : immediately via Bluetooth
+[Helmet — Remaining Fleet] → [Smartphone]               : install status report — success, device ID, firmware version, timestamp : on install complete
+[Smartphone] → [AWS IoT Core]                           : install status report, device ID, firmware version, timestamp        : immediately via helmet/{helmet_id}/firmware/status topic
+[AWS IoT Core] → [AWS IoT Device Management]            : install status report — success, device ID, firmware version, timestamp : immediately via rules engine
+[AWS IoT Device Management] → [Cold Storage]            : firmware rollout record, firmware version, rollout completed, all devices updated, timestamp : on all install success reports received
+```
+
+> Full fleet on new firmware. No further automated action. Observation continues via normal telemetry pipeline. Re-rollout is not needed — the canary observation window is the validation gate.
+
+---
+
+### Branch A — Installation Failure
+
+```
+[AWS IoT Device Management] → [AWS IoT Device Management] : failure count against canary group size — threshold breached        : on install failure reports received
+[AWS IoT Device Management] → [AWS IoT Device Management] : halt rollout to remaining fleet                                     : immediately on threshold breach
+[AWS IoT Device Management] → [AWS IoT Core]            : rollback job, failed canary device IDs, previous stable firmware version : immediately
+[AWS IoT Core] → [Smartphone]                           : rollback package, previous stable firmware version, helmet ID        : via helmet/{helmet_id}/firmware/update topic
+[Smartphone] → [Helmet — Canary Group]                  : rollback package, previous stable firmware version                   : immediately via Bluetooth
+[Helmet — Canary Group] → [Smartphone]                  : rollback install status — success, device ID, firmware version, timestamp : on rollback complete
+[Smartphone] → [AWS IoT Core]                           : rollback install status, device ID, firmware version, timestamp      : immediately via helmet/{helmet_id}/firmware/status topic
+[AWS IoT Core] → [AWS IoT Device Management]            : rollback install status — success, device ID, firmware version, timestamp : immediately via rules engine
+```
+
+#### Monitoring and Alerting — Installation Failure
+
+```
+[CloudWatch] → [CloudWatch]                             : firmware rollout failure metric, firmware version, failure count, timestamp : on rollout halted
+[CloudWatch] → [SNS]                                    : firmware rollout failure alarm, firmware version, failure count, timestamp : immediately on alarm threshold
+[SNS] → [PagerDuty]                                     : firmware rollout failure, firmware version, failure count, timestamp  : immediately
+[PagerDuty] → [Fleet Manager]                           : page — firmware rollout failure, firmware version, failure count, timestamp : immediately via SMS and call
+[PagerDuty] → [Infrastructure Engineer]                 : page — firmware rollout failure, firmware version, failure count, timestamp : immediately via SMS and call
+```
+
+> Devices that never received the update remain on the current stable firmware and are unaffected. Devices in the canary group that failed installation are rolled back to the previous stable version. Fleet returns to a fully known stable state.
+>
+> AWS IoT Device Management is an AWS-managed service — its metrics are surfaced via CloudWatch and routed through SNS, consistent with how IoT Core and database metrics are handled in the monitoring stack (see Flow 9A).
+
+---
+
+### Branch B — Post-Install Behavioural Anomaly
+
+> Detection runs through the existing telemetry pipeline. Telemetry data flows normally — Helmet → Smartphone → IoT Core → Telemetry Infrastructure → Hot Storage. Crash flags detected by Telemetry Infrastructure are written to SQS Crash Queue as normal. Processing Infrastructure reads from SQS Crash Queue and correlates crash flag rates against the canary firmware version using the firmware anomaly threshold from Parameter Store.
+>
+> Cross-reference: Mass Alert Decision Logic Step 2 (firmware version correlation check) uses the same firmware version field for fleet-wide anomaly detection. Flow 9K operates specifically within the canary rollout lifecycle.
+
+#### Anomaly Detection
+
+```
+[Helmet — Canary Group Sensors] → [Helmet — Canary Group] : accelerometer, speed, edge result, firmware version, helmet ID, timestamp : every 1 second
+[Helmet — Canary Group] → [Smartphone]                  : telemetry payload, crash flag, firmware version, helmet ID, timestamp : every 1 second
+[Smartphone] → [AWS IoT Core]                           : JSON array of 10 telemetry payloads + GPS + user ID + batch timestamp : every 10 seconds via helmet/{helmet_id}/telemetry topic
+[AWS IoT Core] → [Telemetry Infrastructure]             : telemetry batch, helmet ID                                          : immediately via IoT Core rules engine
+[Telemetry Infrastructure] → [Hot Storage]              : batch payload, batch timestamp                                       : on every receive
+[Telemetry Infrastructure] → [Telemetry Infrastructure] : inspect batch for crash flag                                        : immediately
+[Telemetry Infrastructure] → [SQS Crash Queue]          : crash event data point, firmware version, helmet ID, timestamp       : if crash flag found
+[Processing Infrastructure] → [SQS Crash Queue]         : read crash event data point                                          : event-driven
+[Processing Infrastructure] → [Processing Infrastructure] : correlate crash flag rate against canary firmware version — check against firmware anomaly threshold from Parameter Store cache : immediately
+[Processing Infrastructure] → [Processing Infrastructure] : firmware anomaly threshold breached                                : on breach detected
+```
+
+#### Halt and Rollback
+
+```
+[Processing Infrastructure] → [AWS IoT Device Management] : halt rollout signal, firmware version, anomaly rate, timestamp    : immediately on threshold breach
+[AWS IoT Device Management] → [AWS IoT Device Management] : halt rollout to remaining fleet                                    : immediately
+[AWS IoT Device Management] → [AWS IoT Core]            : rollback job, canary group device IDs, previous stable firmware version : immediately
+[AWS IoT Core] → [Smartphone]                           : rollback package, previous stable firmware version, helmet ID        : via helmet/{helmet_id}/firmware/update topic
+[Smartphone] → [Helmet — Canary Group]                  : rollback package, previous stable firmware version                   : immediately via Bluetooth
+[Helmet — Canary Group] → [Smartphone]                  : rollback install status — success, device ID, firmware version, timestamp : on rollback complete
+[Smartphone] → [AWS IoT Core]                           : rollback install status, device ID, firmware version, timestamp      : immediately via helmet/{helmet_id}/firmware/status topic
+[AWS IoT Core] → [AWS IoT Device Management]            : rollback install status — success, device ID, firmware version, timestamp : immediately via rules engine
+```
+
+#### Monitoring and Alerting — Behavioural Anomaly
+
+```
+[CloudWatch] → [CloudWatch]                             : firmware anomaly metric, firmware version, anomaly rate, timestamp   : on anomaly detected
+[CloudWatch] → [SNS]                                    : firmware anomaly alarm, firmware version, anomaly rate, timestamp    : immediately on alarm threshold
+[SNS] → [PagerDuty]                                     : firmware anomaly detected, firmware version, anomaly rate, timestamp : immediately
+[PagerDuty] → [Fleet Manager]                           : page — firmware anomaly detected, firmware version, anomaly rate, timestamp : immediately via SMS and call
+[PagerDuty] → [Infrastructure Engineer]                 : page — firmware anomaly detected, firmware version, anomaly rate, timestamp : immediately via SMS and call
+```
+
+> Canary group devices that installed the new firmware successfully are rolled back to the previous stable version regardless — a known bad firmware release is pulled from the entire canary group, not selectively from failing devices. Devices that never received the update are unaffected. Fleet returns to a fully known stable state.
+
+---
+
+### Rider Notification (Both Branches)
+
+```
+[Monitoring Infrastructure] → [AWS IoT Core]            : publish degraded status, helmet ID, timestamp                       : once per affected helmet, on rollback initiated
+[AWS IoT Core] → [Smartphone]                           : degraded status message                                              : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                              : "Systems operational — caution advised while riding"                : immediately
+[Smartphone] → [Helmet HUD]                             : degraded status, helmet ID, timestamp                                : immediately via Bluetooth
+[Helmet HUD] → [Rider]                                  : "Systems operational — caution advised while riding"                : immediately
+```
+
+> Rider is not informed of the firmware rollback specifically — the degraded status message is intentionally generic. Same message as Parameter Store unavailability (Flow 9J).
+
+---
+
+### On Rollback Complete (Both Branches)
+
+```
+[AWS IoT Device Management] → [Cold Storage]            : firmware rollback record, firmware version, rollback reason — install failure or behavioural anomaly, devices affected, timestamp : on all rollback confirmations received
+[CloudWatch] → [CloudWatch]                             : rollback complete metric, all canary group devices on stable firmware, timestamp : on all rollback confirmations received
+[CloudWatch] → [SNS]                                    : rollback complete alarm resolved, timestamp                          : immediately
+[SNS] → [PagerDuty]                                     : rollback complete, timestamp                                        : immediately
+[PagerDuty] → [Fleet Manager]                           : rollback complete, all canary devices on stable firmware, timestamp  : immediately
+[PagerDuty] → [Infrastructure Engineer]                 : rollback complete, timestamp                                        : immediately
+[Monitoring Infrastructure] → [AWS IoT Core]            : publish systems restored status, helmet ID, timestamp                : once per affected helmet, on rollback confirmed
+[AWS IoT Core] → [Smartphone]                           : systems restored status message                                      : via helmet/{helmet_id}/infra/status topic
+[Smartphone App] → [Rider]                              : "Systems fully operational"                                         : immediately
+[Smartphone] → [Helmet HUD]                             : systems restored status, helmet ID, timestamp                        : immediately via Bluetooth
+[Helmet HUD] → [Rider]                                  : "Systems fully operational"                                         : immediately
+```
+
+> No further automated action is taken. Re-release of a fixed firmware version is a separate, manually initiated process by the Fleet Manager. The failed firmware version is not retried automatically.
+
+---
+
+### Known Limitations
+
+#### No post-rollback health verification window
+The system confirms rollback installation success via device status reports but does not run a dedicated observation window to verify that rolled-back devices are behaving correctly before publishing the restored status to riders. A corrupt or incomplete rollback package could leave devices in an unknown state that is not caught until the next telemetry anomaly detection cycle.
+
+#### Firmware anomaly threshold cannot disambiguate a genuine mass incident
+The firmware anomaly threshold detects abnormal crash flag rates correlated to a canary firmware version. If a genuine mass incident coincidentally occurs during a canary rollout window, the same signal could trigger an erroneous rollback. Disambiguating the two scenarios is an offline investigation task — the system always prioritises rolling back over waiting for confirmation.
+
+#### Rollback depends on IoT Core and Smartphone availability
+The rollback delivery path runs through IoT Core → Smartphone → Helmet. If IoT Core is degraded during a firmware rollout failure, or if a rider's Smartphone is offline, the rollback package cannot be delivered to that device. Devices remain on the failed firmware until both IoT Core and Smartphone connectivity are restored. This is a known, accepted limitation for a portfolio project.
+
+#### Observation window anomaly detection relies on normal telemetry pipeline
+Behavioural anomaly detection (Branch B) requires the full telemetry pipeline to be operational — Telemetry Infrastructure must be writing crash data points to SQS Crash Queue, and Processing Infrastructure must be reading them. If either service is down during the canary observation window, anomalies may not be detected until the services recover, by which time the observation window may have passed and full fleet rollout may have been triggered.
