@@ -418,3 +418,10 @@ The monitoring stack consists of Prometheus Graffana Alertmanager constitute the
 like the IOT Core, Telemetry Infra,Processing Infra, Alerting Infra and the Database if the monitoring infra itself goes down then there will be no alerts that will be sent to 
 anyone regarding the status of the infra so its is necessary to have a system in place that continously monitors the monitoring stack that checks the health of nothing 
 but the monitoring stack if it detects a failure of the monitoring stack the infrastructure engineer will be informed 
+
+
+Flow 10 — Firmware Update
+The firmware update is the primary responsibility of the fleet manager, the fleet manager rolls out, updates, patches the firmware related things, 
+the firmware update is rolled out using the AWS IOT device Management service, by deafult the updates are rolled out in the canary deployment
+and we initiate the rollback if there is a failure in the update rollout , the failure can be detected early and rolledback prevent the entire fleet from being affected
+the firmware version flag that is being sent by the helmet can be used to differentiate between the helmets on different versions

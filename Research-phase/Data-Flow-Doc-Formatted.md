@@ -26,6 +26,7 @@
     - [9K — Bad Firmware Update (Config Layer)](#flow-9k--bad-firmware-update-config-layer)
     - [9L — Bad Infrastructure Deploy (Config Layer)](#flow-9l--bad-infrastructure-deploy---cicd-pipeline-config-layer)
     - [9M — Monitoring Stack Failure (Observability Layer)](#flow-9m--monitoring-stack-failure-observability-layer)
+- [Flow 10 — Firmware Update](#flow-10--firmware-update)
 - [Known Limitations](#known-limitations)
 - [Future Enhancements (Post-MVP)](#future-enhancements-post-mvp)
 
@@ -2467,6 +2468,8 @@ To eliminate the audit trail gap during Cold Storage failures, implement a durab
 > **Precondition:** Fleet Manager is rolling out a new firmware version using AWS IoT Device Management. A canary rollout strategy is used — a defined percentage of the fleet receives the new firmware first. The remaining devices are held on the current stable version until the canary group passes a defined observation window.
 >
 > **Delivery path:** AWS IoT Device Management delivers firmware jobs to devices through AWS IoT Core → Smartphone → Helmet via Bluetooth. Helmet NEVER communicates directly with cloud — all install status reports travel back through Smartphone → IoT Core → Device Management.
+>
+> **Install timing (staged model):** The firmware package is delivered OTA and staged locally on the helmet — it does NOT install during the current session. The update applies on the next helmet power cycle. This is consistent with the delivery mechanics defined in Flow 10.
 
 > **New MQTT topics introduced:**
 > - `helmet/{helmet_id}/firmware/update` — cloud-to-device firmware update packages, published by AWS IoT Device Management through IoT Core, subscribed by Smartphone, relayed to Helmet via Bluetooth.
@@ -2475,13 +2478,13 @@ To eliminate the audit trail gap during Cold Storage failures, implement a durab
 
 > **Firmware version field:** Embedded in every telemetry payload — the primary correlation mechanism for detecting anomalies tied to a specific firmware version. See Telemetry Batching Design in Project Context.
 >
-> **Two failure branches:** Branch A covers installation failure — the update process itself breaks on one or more devices. Branch B covers post-install behavioural anomaly — the update installs successfully but the firmware behaves incorrectly in the field, detected via abnormal crash flag rates correlated to the canary firmware version.
+> **Two failure branches:** Branch A covers installation failure — the staged firmware fails to apply on power cycle. Branch B covers post-install behavioural anomaly — the update installs successfully but the firmware behaves incorrectly in the field, detected via abnormal crash flag rates correlated to the canary firmware version.
 >
 > **Response (both branches):** Halt the rollout to the remaining fleet, automatically roll back the canary group to the previous stable firmware version, and page the Fleet Manager. A device on a bad or partially installed firmware is more dangerous than a device on the previous stable release — restoring a known working state takes priority.
 >
 > **Firmware anomaly threshold:** Stored in Parameter Store. Processing Infrastructure watches the metric and triggers the halt — it does not need to understand why the anomaly occurred. Investigation is handled offline after the fleet is restored.
 >
-> **Cross-reference:** The existing Mass Alert Decision Logic (see Project Context) includes firmware version correlation as Step 2 of its decision tree. Flow 9K covers the firmware rollout lifecycle specifically — the mass alert decision tree handles the alert-side response to a fleet-wide anomaly after alerts have already been raised.
+> **Cross-reference:** Flow 10 defines the full operational firmware rollout lifecycle — job creation, canary delivery, observation window, full fleet rollout, abort criteria, and rollback mechanics. Flow 9K focuses specifically on the two failure modes (installation failure and behavioural anomaly) and their detection and response paths.
 
 ---
 
@@ -2494,8 +2497,12 @@ To eliminate the audit trail gap during Cold Storage failures, implement a durab
 [AWS IoT Device Management] → [AWS IoT Core]            : firmware update job, canary group device IDs, firmware package        : immediately
 [AWS IoT Core] → [Smartphone]                           : firmware update package, version identifier, helmet ID               : via helmet/{helmet_id}/firmware/update topic
 [Smartphone] → [Helmet — Canary Group]                  : firmware update package, version identifier                          : immediately via Bluetooth
-[Helmet — Canary Group] → [Helmet — Canary Group]       : install firmware update                                              : immediately on receiving package
-[Helmet — Canary Group] → [Smartphone]                  : install status report — success or failure, device ID, firmware version, timestamp : on install attempt
+[Helmet — Canary Group] → [Helmet — Canary Group]       : stage firmware package locally — do not install                      : on package received
+[Helmet — Canary Group] → [Smartphone]                  : package staged acknowledgement, device ID, firmware version, timestamp : immediately
+[Smartphone] → [AWS IoT Core]                           : package staged acknowledgement, device ID, firmware version, timestamp : immediately via helmet/{helmet_id}/firmware/status topic
+[AWS IoT Core] → [AWS IoT Device Management]            : package staged acknowledgement, device ID, firmware version, timestamp : immediately via rules engine
+[Helmet — Canary Group] → [Helmet — Canary Group]       : apply staged firmware on startup                                     : on next power cycle
+[Helmet — Canary Group] → [Smartphone]                  : install status report — success or failure, device ID, firmware version, timestamp : on install attempt complete
 [Smartphone] → [AWS IoT Core]                           : install status report, device ID, firmware version, timestamp        : immediately via helmet/{helmet_id}/firmware/status topic
 [AWS IoT Core] → [AWS IoT Device Management]            : install status report — success or failure, device ID, firmware version, timestamp : immediately via rules engine
 ```
@@ -2512,17 +2519,24 @@ To eliminate the audit trail gap during Cold Storage failures, implement a durab
 [AWS IoT Device Management] → [AWS IoT Core]            : firmware update job, remaining fleet device IDs, firmware package    : immediately
 [AWS IoT Core] → [Smartphone]                           : firmware update package, version identifier, helmet ID               : via helmet/{helmet_id}/firmware/update topic
 [Smartphone] → [Helmet — Remaining Fleet]               : firmware update package, version identifier                          : immediately via Bluetooth
+[Helmet — Remaining Fleet] → [Helmet — Remaining Fleet] : stage firmware package locally — do not install                      : on package received
+[Helmet — Remaining Fleet] → [Smartphone]               : package staged acknowledgement, device ID, firmware version, timestamp : immediately
+[Smartphone] → [AWS IoT Core]                           : package staged acknowledgement, device ID, firmware version, timestamp : immediately via helmet/{helmet_id}/firmware/status topic
+[AWS IoT Core] → [AWS IoT Device Management]            : package staged acknowledgement, device ID, firmware version, timestamp : immediately via rules engine
+[Helmet — Remaining Fleet] → [Helmet — Remaining Fleet] : apply staged firmware on startup                                     : on next power cycle per device
 [Helmet — Remaining Fleet] → [Smartphone]               : install status report — success, device ID, firmware version, timestamp : on install complete
 [Smartphone] → [AWS IoT Core]                           : install status report, device ID, firmware version, timestamp        : immediately via helmet/{helmet_id}/firmware/status topic
 [AWS IoT Core] → [AWS IoT Device Management]            : install status report — success, device ID, firmware version, timestamp : immediately via rules engine
 [AWS IoT Device Management] → [Cold Storage]            : firmware rollout record, firmware version, rollout completed, all devices updated, timestamp : on all install success reports received
 ```
 
-> Full fleet on new firmware. No further automated action. Observation continues via normal telemetry pipeline. Re-rollout is not needed — the canary observation window is the validation gate.
+> Full fleet on new firmware. No further automated action. Observation continues via normal telemetry pipeline.
 
 ---
 
 ### Branch A — Installation Failure
+
+> Installation failure is now detected at power cycle time, not at delivery time. The helmet stages the package successfully but fails to apply it on restart. The install status report carries a failure flag.
 
 ```
 [AWS IoT Device Management] → [AWS IoT Device Management] : failure count against canary group size — threshold breached        : on install failure reports received
@@ -2530,7 +2544,12 @@ To eliminate the audit trail gap during Cold Storage failures, implement a durab
 [AWS IoT Device Management] → [AWS IoT Core]            : rollback job, failed canary device IDs, previous stable firmware version : immediately
 [AWS IoT Core] → [Smartphone]                           : rollback package, previous stable firmware version, helmet ID        : via helmet/{helmet_id}/firmware/update topic
 [Smartphone] → [Helmet — Canary Group]                  : rollback package, previous stable firmware version                   : immediately via Bluetooth
-[Helmet — Canary Group] → [Smartphone]                  : rollback install status — success, device ID, firmware version, timestamp : on rollback complete
+[Helmet — Canary Group] → [Helmet — Canary Group]       : stage rollback package locally — do not install                      : on package received
+[Helmet — Canary Group] → [Smartphone]                  : package staged acknowledgement, device ID, previous stable firmware version, timestamp : immediately
+[Smartphone] → [AWS IoT Core]                           : package staged acknowledgement, device ID, previous stable firmware version, timestamp : immediately via helmet/{helmet_id}/firmware/status topic
+[AWS IoT Core] → [AWS IoT Device Management]            : package staged acknowledgement, device ID, previous stable firmware version, timestamp : immediately via rules engine
+[Helmet — Canary Group] → [Helmet — Canary Group]       : apply staged rollback firmware on startup                            : on next power cycle
+[Helmet — Canary Group] → [Smartphone]                  : rollback install status — success, device ID, firmware version, timestamp : on rollback install complete
 [Smartphone] → [AWS IoT Core]                           : rollback install status, device ID, firmware version, timestamp      : immediately via helmet/{helmet_id}/firmware/status topic
 [AWS IoT Core] → [AWS IoT Device Management]            : rollback install status — success, device ID, firmware version, timestamp : immediately via rules engine
 ```
@@ -2580,7 +2599,12 @@ To eliminate the audit trail gap during Cold Storage failures, implement a durab
 [AWS IoT Device Management] → [AWS IoT Core]            : rollback job, canary group device IDs, previous stable firmware version : immediately
 [AWS IoT Core] → [Smartphone]                           : rollback package, previous stable firmware version, helmet ID        : via helmet/{helmet_id}/firmware/update topic
 [Smartphone] → [Helmet — Canary Group]                  : rollback package, previous stable firmware version                   : immediately via Bluetooth
-[Helmet — Canary Group] → [Smartphone]                  : rollback install status — success, device ID, firmware version, timestamp : on rollback complete
+[Helmet — Canary Group] → [Helmet — Canary Group]       : stage rollback package locally — do not install                      : on package received
+[Helmet — Canary Group] → [Smartphone]                  : package staged acknowledgement, device ID, previous stable firmware version, timestamp : immediately
+[Smartphone] → [AWS IoT Core]                           : package staged acknowledgement, device ID, previous stable firmware version, timestamp : immediately via helmet/{helmet_id}/firmware/status topic
+[AWS IoT Core] → [AWS IoT Device Management]            : package staged acknowledgement, device ID, previous stable firmware version, timestamp : immediately via rules engine
+[Helmet — Canary Group] → [Helmet — Canary Group]       : apply staged rollback firmware on startup                            : on next power cycle
+[Helmet — Canary Group] → [Smartphone]                  : rollback install status — success, device ID, firmware version, timestamp : on rollback install complete
 [Smartphone] → [AWS IoT Core]                           : rollback install status, device ID, firmware version, timestamp      : immediately via helmet/{helmet_id}/firmware/status topic
 [AWS IoT Core] → [AWS IoT Device Management]            : rollback install status — success, device ID, firmware version, timestamp : immediately via rules engine
 ```
@@ -2842,3 +2866,200 @@ If a secondary failure occurs (e.g., Hot Storage goes down) *while* the Monitori
 
 #### Relying on a Single External Provider
 If Healthchecks.io itself experiences a global outage at the exact same moment  AWS infrastructure crashes, the Dead Man's Switch will not fire to PagerDuty. This is an accepted industry risk
+
+---
+
+## Flow 10 — Firmware Update
+
+> **Precondition:** A new firmware version has been prepared and uploaded to S3 by the firmware engineering team. The Fleet Manager initiates the rollout via AWS IoT Device Management.
+>
+> **Rollout strategy:** Canary deployment. 10% of the fleet receives the update first (canary group). The observation window is threshold-based — full fleet rollout proceeds automatically once the canary group passes the observation window with no anomalies detected. Abort criteria are set on the job upfront — if the failure rate across devices in any batch exceeds the configured threshold, the job halts immediately and only devices that have already installed the update are rolled back. Devices that have not yet received the package are untouched.
+>
+> **Install timing:** The firmware package is delivered OTA via IoT Core → Smartphone → Helmet. The helmet stages the package locally but does not apply it during the current session. The update installs on the next helmet power cycle. The updated firmware version is confirmed via the firmware version field in the first telemetry payload after restart.
+>
+> **Previous stable firmware version** is retained in S3 at all times. Rollback is executed by pushing the previous stable version as a new AWS IoT Job — not a special undo operation.
+>
+> **Abort criteria** are configured by the Fleet Manager at job creation time. The exact failure rate threshold is a Fleet Manager operational decision and is not hardcoded in infrastructure.
+>
+> **Cross-reference:** Flow 9K covers the *detection and response* to a bad firmware update (installation failure and behavioural anomaly). Flow 10 covers the *operational lifecycle* of a firmware rollout — job creation, canary delivery, observation, full fleet rollout, and rollback mechanics. Flow 10 supersedes the install timing model in Flow 9K: firmware is staged on delivery and applied on next power cycle, rather than installed immediately.
+
+---
+
+### Job Creation
+
+```
+[Fleet Manager] → [AWS IoT Device Management]           : create firmware rollout job, new firmware version, S3 firmware package URI, canary percentage (10%), abort criteria threshold, observation window duration : on new firmware release
+[AWS IoT Device Management] → [Cold Storage]            : query canary group device IDs, current stable firmware version                                        : immediately
+[Cold Storage] → [AWS IoT Device Management]            : canary group device IDs, current stable firmware version                                              : immediately
+[AWS IoT Device Management] → [AWS IoT Device Management] : job created, canary group targeted, abort criteria armed, observation window timer set               : immediately
+```
+
+---
+
+### Canary Package Delivery
+
+```
+[AWS IoT Device Management] → [AWS IoT Core]            : firmware update job, canary group device IDs, S3 firmware package URI                                 : immediately on job creation
+[AWS IoT Core] → [Smartphone]                           : firmware update package, new firmware version identifier, helmet ID                                    : via helmet/{helmet_id}/firmware/update topic
+[Smartphone] → [Helmet — Canary Group]                  : firmware update package, new firmware version identifier                                               : immediately via Bluetooth
+[Helmet — Canary Group] → [Helmet — Canary Group]       : stage firmware package locally — do not install                                                        : on package received
+[Helmet — Canary Group] → [Smartphone]                  : package staged acknowledgement, device ID, firmware version, timestamp                                 : immediately
+[Smartphone] → [AWS IoT Core]                           : package staged acknowledgement, device ID, firmware version, timestamp                                 : immediately via helmet/{helmet_id}/firmware/status topic
+[AWS IoT Core] → [AWS IoT Device Management]            : package staged acknowledgement, device ID, firmware version, timestamp                                 : immediately via rules engine
+```
+
+---
+
+### Canary Install Confirmation (Next Power Cycle)
+
+> Rider powers the helmet off and back on at a later time. The helmet applies the staged firmware during startup before resuming normal operation. The updated firmware version appears in the first telemetry payload of the new session.
+
+```
+[Helmet — Canary Group] → [Helmet — Canary Group]       : apply staged firmware on startup                                                                       : on next power cycle
+[Helmet — Canary Group] → [Smartphone]                  : install status — success or failure, device ID, new firmware version, timestamp                        : on install attempt complete
+[Smartphone] → [AWS IoT Core]                           : install status, device ID, new firmware version, timestamp                                              : immediately via helmet/{helmet_id}/firmware/status topic
+[AWS IoT Core] → [AWS IoT Device Management]            : install status — success or failure, device ID, new firmware version, timestamp                        : immediately via rules engine
+[AWS IoT Device Management] → [AWS IoT Device Management] : update installed device count and failure count against abort criteria                                : on each status report received
+```
+
+> Install confirmation is also passively verified through normal telemetry — the firmware version field in every telemetry payload reflects the active firmware version. Processing Infrastructure uses this field during the observation window for anomaly correlation (see Flow 9K Branch B).
+
+---
+
+### Observation Window
+
+> All canary group devices have reported successful installation. AWS IoT Device Management starts the observation window timer. Processing Infrastructure monitors crash flag rates correlated against the new firmware version via the normal telemetry pipeline throughout this window.
+
+```
+[AWS IoT Device Management] → [AWS IoT Device Management] : all canary installs confirmed, start observation window timer                                         : on all canary install success reports received
+[AWS IoT Device Management] → [AWS IoT Device Management] : observation window active — monitoring for halt signal from Processing Infrastructure                  : continuously until timer expiry
+```
+
+#### Branch A — Observation Window Passes (Happy Path)
+
+```
+[AWS IoT Device Management] → [AWS IoT Device Management] : observation window expired, no halt signal received, proceed to full fleet rollout                    : on timer expiry
+```
+
+> Cross-reference: If Processing Infrastructure detects a behavioural anomaly during the observation window, it sends a halt signal to AWS IoT Device Management. That path is fully defined in Flow 9K Branch B and is not repeated here.
+
+---
+
+### Full Fleet Rollout
+
+> Same delivery and install confirmation path as canary. Abort criteria remain armed throughout. AWS IoT Device Management monitors the failure rate live — if the threshold is breached at any point during rollout, the job halts immediately.
+
+```
+[AWS IoT Device Management] → [AWS IoT Core]            : firmware update job, remaining fleet device IDs, S3 firmware package URI                               : immediately on observation window pass
+[AWS IoT Core] → [Smartphone]                           : firmware update package, new firmware version identifier, helmet ID                                    : via helmet/{helmet_id}/firmware/update topic
+[Smartphone] → [Helmet — Remaining Fleet]               : firmware update package, new firmware version identifier                                               : immediately via Bluetooth
+[Helmet — Remaining Fleet] → [Helmet — Remaining Fleet] : stage firmware package locally — do not install                                                        : on package received
+[Helmet — Remaining Fleet] → [Smartphone]               : package staged acknowledgement, device ID, firmware version, timestamp                                 : immediately
+[Smartphone] → [AWS IoT Core]                           : package staged acknowledgement, device ID, firmware version, timestamp                                 : immediately via helmet/{helmet_id}/firmware/status topic
+[AWS IoT Core] → [AWS IoT Device Management]            : package staged acknowledgement, device ID, firmware version, timestamp                                 : immediately via rules engine
+[Helmet — Remaining Fleet] → [Helmet — Remaining Fleet] : apply staged firmware on startup                                                                       : on next power cycle per device
+[Helmet — Remaining Fleet] → [Smartphone]               : install status — success or failure, device ID, new firmware version, timestamp                        : on install attempt complete
+[Smartphone] → [AWS IoT Core]                           : install status, device ID, new firmware version, timestamp                                              : immediately via helmet/{helmet_id}/firmware/status topic
+[AWS IoT Core] → [AWS IoT Device Management]            : install status — success or failure, device ID, new firmware version, timestamp                        : immediately via rules engine
+[AWS IoT Device Management] → [AWS IoT Device Management] : update installed device count and failure count against abort criteria                                : on each status report received
+```
+
+---
+
+### Branch B — Abort Criteria Breached During Full Fleet Rollout
+
+> The failure rate across devices that have received the update crosses the abort criteria threshold mid-rollout. The job halts immediately. Devices that have not yet received the package are untouched. Only devices that have already installed the new firmware are rolled back.
+
+```
+[AWS IoT Device Management] → [AWS IoT Device Management] : failure count breaches abort criteria threshold — halt job                                            : immediately on threshold breach
+[AWS IoT Device Management] → [AWS IoT Device Management] : cancel pending deliveries to all remaining untouched devices                                          : immediately
+[AWS IoT Device Management] → [AWS IoT Core]            : rollback job, device IDs of installed devices only, previous stable firmware S3 URI                    : immediately
+[AWS IoT Core] → [Smartphone]                           : rollback package, previous stable firmware version identifier, helmet ID                               : via helmet/{helmet_id}/firmware/update topic
+[Smartphone] → [Helmet]                                 : rollback package, previous stable firmware version identifier                                           : immediately via Bluetooth
+[Helmet] → [Helmet]                                     : stage rollback package locally — do not install                                                         : on package received
+[Helmet] → [Smartphone]                                 : package staged acknowledgement, device ID, previous stable firmware version, timestamp                  : immediately
+[Smartphone] → [AWS IoT Core]                           : package staged acknowledgement, device ID, previous stable firmware version, timestamp                  : immediately via helmet/{helmet_id}/firmware/status topic
+[AWS IoT Core] → [AWS IoT Device Management]            : package staged acknowledgement, device ID, previous stable firmware version, timestamp                  : immediately via rules engine
+[Helmet] → [Helmet]                                     : apply staged rollback firmware on startup                                                               : on next power cycle
+[Helmet] → [Smartphone]                                 : rollback install status — success, device ID, previous stable firmware version, timestamp               : on rollback install complete
+[Smartphone] → [AWS IoT Core]                           : rollback install status, device ID, previous stable firmware version, timestamp                         : immediately via helmet/{helmet_id}/firmware/status topic
+[AWS IoT Core] → [AWS IoT Device Management]            : rollback install status — success, device ID, previous stable firmware version, timestamp               : immediately via rules engine
+```
+
+#### Monitoring and Alerting — Abort Criteria Breached
+
+```
+[CloudWatch] → [CloudWatch]                             : firmware rollout abort metric, new firmware version, failure count, devices affected, timestamp         : on job halted
+[CloudWatch] → [SNS]                                    : firmware rollout abort alarm, new firmware version, failure count, timestamp                            : immediately on alarm threshold
+[SNS] → [PagerDuty]                                     : firmware rollout aborted, new firmware version, failure count, timestamp                                : immediately
+[PagerDuty] → [Fleet Manager]                           : page — firmware rollout aborted, new firmware version, failure count, devices affected, timestamp       : immediately via SMS and call
+[PagerDuty] → [Infrastructure Engineer]                 : page — firmware rollout aborted, new firmware version, failure count, timestamp                         : immediately via SMS and call
+```
+
+> Devices that never received the package remain on the current stable firmware and are unaffected. Devices that installed the new firmware are rolled back to the previous stable version. Fleet returns to a fully known stable state.
+
+---
+
+### Branch C — Fleet Manager Manual Rollback
+
+> The Fleet Manager identifies a problem independently — via dashboard review, rider reports, or any out-of-band signal — and decides to roll back without waiting for abort criteria to fire automatically.
+
+```
+[Fleet Manager] → [AWS IoT Device Management]           : cancel active rollout job                                                                               : manual decision
+[AWS IoT Device Management] → [AWS IoT Device Management] : cancel pending deliveries to all remaining untouched devices                                          : immediately
+[Fleet Manager] → [AWS IoT Device Management]           : create rollback job, device IDs of installed devices, previous stable firmware S3 URI                   : immediately
+[AWS IoT Device Management] → [AWS IoT Core]            : rollback job, device IDs of installed devices, previous stable firmware S3 URI                          : immediately
+[AWS IoT Core] → [Smartphone]                           : rollback package, previous stable firmware version identifier, helmet ID                               : via helmet/{helmet_id}/firmware/update topic
+[Smartphone] → [Helmet]                                 : rollback package, previous stable firmware version identifier                                           : immediately via Bluetooth
+[Helmet] → [Helmet]                                     : stage rollback package locally — do not install                                                         : on package received
+[Helmet] → [Smartphone]                                 : package staged acknowledgement, device ID, previous stable firmware version, timestamp                  : immediately
+[Smartphone] → [AWS IoT Core]                           : package staged acknowledgement, device ID, previous stable firmware version, timestamp                  : immediately via helmet/{helmet_id}/firmware/status topic
+[AWS IoT Core] → [AWS IoT Device Management]            : package staged acknowledgement, device ID, previous stable firmware version, timestamp                  : immediately via rules engine
+[Helmet] → [Helmet]                                     : apply staged rollback firmware on startup                                                               : on next power cycle
+[Helmet] → [Smartphone]                                 : rollback install status — success, device ID, previous stable firmware version, timestamp               : on rollback install complete
+[Smartphone] → [AWS IoT Core]                           : rollback install status, device ID, previous stable firmware version, timestamp                         : immediately via helmet/{helmet_id}/firmware/status topic
+[AWS IoT Core] → [AWS IoT Device Management]            : rollback install status — success, device ID, previous stable firmware version, timestamp               : immediately via rules engine
+```
+
+> Manual rollback follows the same delivery path as abort-triggered rollback. The difference is the trigger — Fleet Manager decision rather than automated threshold breach.
+
+---
+
+### On Rollout Complete (Happy Path)
+
+```
+[AWS IoT Device Management] → [Cold Storage]            : firmware rollout record, new firmware version, rollout completed, all devices updated, timestamp        : on all install success reports received
+[CloudWatch] → [CloudWatch]                             : firmware rollout complete metric, new firmware version, all devices confirmed, timestamp                 : on all install success reports received
+[CloudWatch] → [SNS]                                    : firmware rollout complete notification, new firmware version, timestamp                                  : immediately
+[SNS] → [Fleet Manager]                                 : firmware rollout complete, new firmware version, all devices updated, timestamp                          : immediately via email
+```
+
+> No paging on happy path completion — rollout complete is a low-urgency notification, not an incident. SNS routes directly to Fleet Manager email, not PagerDuty.
+
+---
+
+### On Rollback Complete (Branches B and C)
+
+```
+[AWS IoT Device Management] → [Cold Storage]            : firmware rollback record, new firmware version, rollback reason — abort criteria or manual, devices affected, timestamp : on all rollback confirmations received
+[CloudWatch] → [CloudWatch]                             : rollback complete metric, all affected devices on stable firmware, timestamp                             : on all rollback confirmations received
+[CloudWatch] → [SNS]                                    : rollback complete alarm resolved, timestamp                                                              : immediately
+[SNS] → [PagerDuty]                                     : rollback complete, timestamp                                                                            : immediately
+[PagerDuty] → [Fleet Manager]                           : rollback complete, all affected devices on stable firmware, timestamp                                   : immediately
+[PagerDuty] → [Infrastructure Engineer]                 : rollback complete, timestamp                                                                            : immediately
+```
+
+> No further automated action. Re-release of a fixed firmware version is a separate, manually initiated process by the Fleet Manager. The failed firmware version is not retried automatically.
+
+---
+
+### Known Limitations
+
+#### Rollback depends on next power cycle
+Both the new firmware install and the rollback apply at next helmet power cycle — not immediately. A helmet that has staged a bad firmware package but not yet restarted will install the bad firmware on its next power cycle even after a rollback job has been issued, if the rollback package has not yet been staged over it. The rollback package overwrites the staged update as soon as it is delivered, but delivery requires IoT Core and Smartphone to be available.
+
+#### No install confirmation from helmets that never power cycle
+A device that stages the firmware package but never restarts will never report an install status. AWS IoT Device Management will show it as `staged` indefinitely. The Fleet Manager must account for this in rollout completion reporting — 100% install confirmation is not guaranteed within any fixed timeframe.
+
+#### Rollback scope is install-confirmed devices only
+Abort criteria and manual rollback both target only devices that have confirmed installation. Devices that staged the package but not yet installed retain the staged package. If they restart after rollback is complete, they may install the bad firmware. Fleet Manager must cancel the original job cleanly to prevent staged packages from being applied.

@@ -397,6 +397,66 @@
 
 ---
 
+## Flow 10 — Firmware Update
+
+**Precondition:** New firmware uploaded to S3 by firmware engineering. Fleet Manager initiates rollout via AWS IoT Device Management.
+
+**Rollout strategy:** Canary deployment — 10% of fleet first. Observation window is threshold-based. Abort criteria configured by Fleet Manager at job creation.
+
+**Install timing (staged, NOT immediate):**
+- Firmware delivered OTA: IoT Core → Smartphone → Helmet via Bluetooth
+- Helmet stages package locally — does NOT apply during current session
+- Update installs on next helmet power cycle
+- Confirmed via firmware version field in first telemetry payload after restart
+
+**Job lifecycle:**
+1. Fleet Manager creates rollout job with: firmware version, S3 URI, canary %, abort threshold, observation window
+2. Device Management queries Cold Storage for canary group device IDs
+3. Canary group receives package → stages locally → ack sent back
+4. Install happens on next power cycle → install status reported back
+5. Observation window starts when all canary installs confirmed
+6. On window pass → full fleet rollout (same staged delivery path)
+
+**Branch B — Abort Criteria Breached:**
+- Failure rate crosses threshold mid-rollout → job halts immediately
+- Pending deliveries cancelled for untouched devices
+- Rollback job pushed to install-confirmed devices only (previous stable S3 URI)
+- Rollback also applies on next power cycle
+- CloudWatch → SNS → PagerDuty → Fleet Manager + Infra Engineer paged
+
+**Branch C — Fleet Manager Manual Rollback:**
+- Fleet Manager cancels active job + creates rollback job manually
+- Same delivery path as abort-triggered rollback
+- Trigger is Fleet Manager decision, not automated threshold
+
+**On Rollout Complete (Happy Path):**
+- Cold Storage: rollout record written
+- CloudWatch → SNS → Fleet Manager email (NOT PagerDuty — low urgency)
+
+**On Rollback Complete (Branches B and C):**
+- Cold Storage: rollback record with reason (abort criteria or manual)
+- PagerDuty notifications to Fleet Manager + Infra Engineer
+- No automatic re-release — Fleet Manager must manually initiate fixed version
+
+**Key decisions:**
+- Staged install model supersedes 9K's immediate install — firmware is staged on delivery, applied on next power cycle
+- Rollback is a new IoT Job pushing previous stable firmware — not a special undo
+- Previous stable version retained in S3 at all times
+- Abort criteria threshold is Fleet Manager operational choice — not hardcoded
+- Happy path completion routes to email, not PagerDuty
+
+**Known limitations:**
+- Rollback depends on next power cycle — a helmet with staged bad firmware may still install it if rollback package hasn't been delivered yet
+- No install confirmation from helmets that never power cycle — `staged` status shown indefinitely
+- Rollback scope is install-confirmed devices only — staged-but-not-installed devices retain the bad package unless original job is cancelled cleanly
+
+**Cross-references:**
+- Flow 9K covers detection/response to bad updates (Branches A and B)
+- Flow 10 covers the operational rollout lifecycle
+- Observation window anomaly detection → Flow 9K Branch B
+
+---
+
 ## SQS Queue Summary (Quick Reference)
 
 | Queue | Source | Consumer | Retention | Purpose |
@@ -419,8 +479,11 @@
 | Graceful shutdown retroactive resolution | Flow 6 Sad Path Scenario 2A/2B | Flow 7, 8 |
 | Mass alert decision tree | Flow 9A | Flow 9B |
 | Buffer sync failure (3 cases) | Flow 2 Sad Path 2C | Implied by all catch-up flows |
+| Firmware rollout lifecycle (staged install) | Flow 10 | Flow 9K |
+| Firmware anomaly detection (observation window) | Flow 9K Branch B | Flow 10 |
+| Firmware rollback mechanics | Flow 10 Branches B/C | Flow 9K |
 
 ---
 
-*Reference card version: Post-Alerting-Decoupling*
-*Last updated: 2026-03-30*
+*Reference card version: Post-Flow-10-Firmware-Update*
+*Last updated: 2026-04-09*
