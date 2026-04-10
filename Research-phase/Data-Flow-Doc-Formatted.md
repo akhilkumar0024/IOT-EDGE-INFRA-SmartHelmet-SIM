@@ -27,6 +27,7 @@
     - [9L — Bad Infrastructure Deploy (Config Layer)](#flow-9l--bad-infrastructure-deploy---cicd-pipeline-config-layer)
     - [9M — Monitoring Stack Failure (Observability Layer)](#flow-9m--monitoring-stack-failure-observability-layer)
 - [Flow 10 — Firmware Update](#flow-10--firmware-update)
+- [Flow 11 — Scale Up / Scale Down](#flow-11--scale-up--scale-down)
 - [Known Limitations](#known-limitations)
 - [Future Enhancements (Post-MVP)](#future-enhancements-post-mvp)
 
@@ -3063,3 +3064,308 @@ A device that stages the firmware package but never restarts will never report a
 
 #### Rollback scope is install-confirmed devices only
 Abort criteria and manual rollback both target only devices that have confirmed installation. Devices that staged the package but not yet installed retain the staged package. If they restart after rollback is complete, they may install the bad firmware. Fleet Manager must cancel the original job cleanly to prevent staged packages from being applied.
+
+---
+
+## Flow 11 — Scale Up / Scale Down
+
+> **Precondition:** The Smart Helmet fleet generates variable traffic volumes throughout the day. During commuter rush hours (7–10 AM, 5–9 PM), the majority of the fleet is active and streaming telemetry simultaneously. During off-peak hours (midday, overnight), most helmets are powered off. Infrastructure must scale dynamically to handle peak load without over-provisioning during quiet periods.
+>
+> **Two scaling strategies combined:** Scheduled scaling pre-provisions capacity before known traffic peaks — eliminates cold-start lag. Reactive scaling responds to live metrics for unexpected spikes — catches edge cases that scheduled scaling misses (mass events, gradual traffic growth).
+>
+> **Scaling boundaries:** Minimum 2 instances per ECS service at all times — single instance is a single point of failure. Maximum 5 instances per service — cost ceiling for a portfolio/demo project with a fleet of ~100 helmets.
+>
+> **Components that do NOT scale:** IoT Core (AWS-managed, scales automatically), SQS queues (AWS-managed, unlimited throughput), Cold Storage (low-frequency writes, fixed provisioned capacity), Monitoring Stack (single ECS instance, known limitation).
+>
+> **Cooldown period:** 30 minutes after any scaling event before the next scale-in is permitted. Prevents flapping (rapid up-down-up-down oscillation). Production-grade cooldown values would be tuned based on traffic analytics.
+
+---
+
+### Traffic Distribution — ALB in Front of Telemetry Infrastructure
+
+> IoT Core rules engine delivers telemetry batches to Telemetry Infrastructure via an HTTP action targeting an Application Load Balancer (ALB). The ALB distributes incoming traffic across all healthy Telemetry Infra ECS tasks using round-robin routing. This is the foundational mechanism that enables Telemetry Infrastructure to scale horizontally.
+
+```
+[AWS IoT Core] → [ALB]                                  : telemetry batch, helmet ID                                                                             : immediately via IoT Core rules engine HTTP action
+[ALB] → [Telemetry Infrastructure — ECS Task]            : telemetry batch, helmet ID                                                                             : round-robin distribution across healthy targets
+[Telemetry Infrastructure — ECS Task] → [Hot Storage (DynamoDB)] : write telemetry batch                                                                         : on every receive
+[Telemetry Infrastructure — ECS Task] → [SQS Crash Queue] : crash event data point, firmware version, helmet ID, timestamp                                       : if crash flag found in batch
+[Telemetry Infrastructure — ECS Task] → [SQS Control Queue] : control message data point (shutdown, low battery, battery death)                                  : if control event found in batch
+```
+
+> ALB also provides health checks — unhealthy ECS tasks are automatically removed from rotation. During scale-down, ALB drains in-flight connections before deregistering a task (deregistration delay — default 300 seconds).
+
+---
+
+### Scheduled Scaling
+
+> Scheduled scaling pre-provisions capacity before predictable traffic peaks. ECS Application Auto Scaling supports scheduled actions that adjust desired task count on a cron schedule.
+
+```
+[ECS Application Auto Scaling] → [Telemetry Infrastructure]  : scale to 4 tasks                                                                                  : 06:45 AM daily (15 min before morning rush)
+[ECS Application Auto Scaling] → [Processing Infrastructure] : scale to 3 tasks                                                                                  : 06:45 AM daily
+[ECS Application Auto Scaling] → [Alerting Infrastructure]   : scale to 3 tasks                                                                                  : 06:45 AM daily
+[ECS Application Auto Scaling] → [Telemetry Infrastructure]  : scale to 4 tasks                                                                                  : 04:45 PM daily (15 min before evening rush)
+[ECS Application Auto Scaling] → [Processing Infrastructure] : scale to 3 tasks                                                                                  : 04:45 PM daily
+[ECS Application Auto Scaling] → [Alerting Infrastructure]   : scale to 3 tasks                                                                                  : 04:45 PM daily
+[ECS Application Auto Scaling] → [Telemetry Infrastructure]  : scale to 2 tasks (minimum)                                                                        : 10:30 AM daily (after morning rush)
+[ECS Application Auto Scaling] → [Processing Infrastructure] : scale to 2 tasks (minimum)                                                                        : 10:30 AM daily
+[ECS Application Auto Scaling] → [Alerting Infrastructure]   : scale to 2 tasks (minimum)                                                                        : 10:30 AM daily
+[ECS Application Auto Scaling] → [Telemetry Infrastructure]  : scale to 2 tasks (minimum)                                                                        : 09:30 PM daily (after evening rush)
+[ECS Application Auto Scaling] → [Processing Infrastructure] : scale to 2 tasks (minimum)                                                                        : 09:30 PM daily
+[ECS Application Auto Scaling] → [Alerting Infrastructure]   : scale to 2 tasks (minimum)                                                                        : 09:30 PM daily
+```
+
+> Telemetry Infrastructure gets the highest scheduled count (4) because it handles every telemetry batch from every active helmet. Processing and Alerting Infra get 3 because they only handle crash events and control messages — a fraction of total telemetry volume.
+>
+> Scheduled actions fire 15 minutes before the rush window to give tasks time to start and register with the ALB or begin polling SQS.
+
+---
+
+### Reactive Scaling — Telemetry Infrastructure
+
+> Telemetry Infrastructure is write-heavy, not compute-heavy. CPU utilization is a poor scaling signal — it stays low even under load because the bottleneck is I/O (writes to DynamoDB and SQS), not computation. The correct signal is ALB request count per target.
+
+```
+[CloudWatch] → [CloudWatch]                             : ALB request count per target metric, current value, timestamp                                          : continuously
+[CloudWatch] → [ECS Application Auto Scaling]           : ALB request count per target exceeds threshold                                                         : on threshold breach
+[ECS Application Auto Scaling] → [ECS]                  : increase Telemetry Infrastructure desired count by 1, up to maximum 5                                  : immediately
+[ECS] → [Telemetry Infrastructure — New Task]           : start new task, register with ALB target group                                                          : task startup time (~60–90 seconds)
+[ALB] → [Telemetry Infrastructure — New Task]           : begin routing traffic to new task after health check passes                                             : on first successful health check
+```
+
+> Reactive scaling supplements scheduled scaling — it catches unexpected spikes that exceed scheduled capacity. Both policies coexist; ECS uses the higher desired count from either policy.
+
+---
+
+### Reactive Scaling — Processing Infrastructure
+
+> Processing Infrastructure is a queue consumer. It reads from SQS Crash Queue, SQS Control Queue, and SQS LWT Queue. The correct scaling signal is the maximum queue depth across all three queues — if any queue is backing up, more tasks are needed.
+
+```
+[CloudWatch] → [CloudWatch]                             : SQS ApproximateNumberOfMessagesVisible metric — Crash Queue, Control Queue, LWT Queue                   : every 60 seconds
+[CloudWatch] → [ECS Application Auto Scaling]           : maximum queue depth across three queues exceeds threshold                                               : on threshold breach
+[ECS Application Auto Scaling] → [ECS]                  : increase Processing Infrastructure desired count by 1, up to maximum 5                                 : immediately
+[ECS] → [Processing Infrastructure — New Task]          : start new task, begin polling SQS queues                                                                : task startup time (~60–90 seconds)
+```
+
+> Processing Infrastructure also scales on CPU utilization at 70% as a secondary signal — crash validation involves DynamoDB reads and threshold comparisons that can become compute-bound during a mass event.
+
+---
+
+### Reactive Scaling — Alerting Infrastructure
+
+> Alerting Infrastructure reads from SQS Alert Queue. Each message spawns an independent AWS Step Functions execution for the alert lifecycle (5-sec override window or 30-sec countdown). The ECS task itself does not wait — it dequeues, starts a Step Function, and moves on. Step Functions is serverless and scales automatically.
+
+```
+[CloudWatch] → [CloudWatch]                             : SQS ApproximateNumberOfMessagesVisible metric — Alert Queue                                             : every 60 seconds
+[CloudWatch] → [ECS Application Auto Scaling]           : Alert Queue depth exceeds threshold                                                                     : on threshold breach
+[ECS Application Auto Scaling] → [ECS]                  : increase Alerting Infrastructure desired count by 1, up to maximum 5                                   : immediately
+[ECS] → [Alerting Infrastructure — New Task]            : start new task, begin polling SQS Alert Queue                                                           : task startup time (~60–90 seconds)
+```
+
+> Alerting Infrastructure is the lowest-traffic service — it only handles confirmed crash events and false positives requiring rider interaction. The majority of telemetry batches contain no crash flag and never reach this stage.
+
+---
+
+### Reactive Scaling — Hot Storage (DynamoDB Auto-Scaling)
+
+> Hot Storage uses DynamoDB with auto-scaling enabled on both Read Capacity Units (RCUs) and Write Capacity Units (WCUs). Target utilization is set to 70% — DynamoDB automatically adjusts capacity when utilization crosses this threshold. Storage capacity is unlimited — DynamoDB never runs out of space.
+
+```
+[DynamoDB Auto-Scaling] → [DynamoDB]                    : write utilization exceeds 70% target — increase WCUs                                                   : automatically on sustained breach
+[DynamoDB Auto-Scaling] → [DynamoDB]                    : read utilization exceeds 70% target — increase RCUs                                                    : automatically on sustained breach
+[DynamoDB Auto-Scaling] → [DynamoDB]                    : write utilization below 70% target — decrease WCUs                                                     : automatically after sustained drop (cooldown applies)
+[DynamoDB Auto-Scaling] → [DynamoDB]                    : read utilization below 70% target — decrease RCUs                                                      : automatically after sustained drop (cooldown applies)
+```
+
+> Write capacity scales with Telemetry Infrastructure traffic — more ECS tasks writing concurrently means higher WCU demand. Read capacity scales with Processing Infrastructure activity — crash validation reads recent telemetry history from Hot Storage.
+>
+> DynamoDB TTL handles the 24-hour expiry natively — records are deleted automatically after their TTL attribute expires. No manual cleanup needed.
+
+---
+
+### Scale-Down Mechanics
+
+> Scale-down is more dangerous than scale-up. Removing capacity too aggressively can cause message loss, in-flight request failures, or service degradation. Scale-down follows a strict sequence: metric drop detected → cooldown check → scale-in decision → graceful task termination → minimum instance floor enforced.
+
+#### Cooldown Period
+
+```
+[ECS Application Auto Scaling] → [ECS Application Auto Scaling] : scaling event completed — start 30-minute cooldown timer                                       : on any scale-up or scale-down event
+[ECS Application Auto Scaling] → [ECS Application Auto Scaling] : scale-in request received during cooldown — rejected                                              : if cooldown timer has not expired
+[ECS Application Auto Scaling] → [ECS Application Auto Scaling] : cooldown expired — scale-in permitted if metrics support it                                       : on cooldown timer expiry
+```
+
+> Cooldown prevents flapping — rapid scale-up/scale-down oscillation that wastes resources and causes instability. The 30-minute window ensures traffic has genuinely stabilised before removing capacity.
+>
+> **Scheduled vs cooldown conflict:** Scheduled actions in ECS Application Auto Scaling bypass the reactive cooldown and execute on their cron trigger regardless of recent scaling activity. If a reactive scale-up fired shortly before a scheduled scale-down, the scheduled action will still fire and temporarily reduce capacity. However, the reactive target tracking policy will re-evaluate within its next evaluation period (~60 seconds) and scale back up if the metric still demands it. The brief capacity dip is accepted behaviour — it self-corrects within seconds.
+
+#### Scaling Policy Conflict Resolution
+
+> When multiple scaling policies (scheduled + reactive) are active simultaneously, ECS Application Auto Scaling uses the **highest desired count** from any active policy. This ensures safety — the system may briefly over-provision but will never under-provision when there is active demand. The only exception is the scheduled vs cooldown edge case documented above, where a scheduled action can briefly override a reactive scale-up before the reactive policy self-corrects.
+
+---
+
+#### Scale-Down Triggers Per Component
+
+> Each component scales down when its scaling signal drops below threshold for a sustained period AND the cooldown has expired AND the current task count is above the minimum (2).
+
+##### Telemetry Infrastructure
+
+```
+[CloudWatch] → [CloudWatch]                             : ALB request count per target below threshold for sustained period                                        : continuously monitored
+[CloudWatch] → [ECS Application Auto Scaling]           : ALB request count per target below scale-down threshold                                                  : on sustained drop detected
+[ECS Application Auto Scaling] → [ECS Application Auto Scaling] : check cooldown timer — expired                                                                 : before proceeding
+[ECS Application Auto Scaling] → [ECS Application Auto Scaling] : check current task count — above minimum (2)                                                    : before proceeding
+[ECS Application Auto Scaling] → [ECS]                  : decrease Telemetry Infrastructure desired count by 1                                                      : on all checks passed
+```
+
+##### Processing Infrastructure
+
+```
+[CloudWatch] → [CloudWatch]                             : all three SQS queue depths below threshold AND CPU utilization below 70% for sustained period             : continuously monitored
+[CloudWatch] → [ECS Application Auto Scaling]           : queue depth and CPU both below scale-down thresholds                                                      : on sustained drop detected
+[ECS Application Auto Scaling] → [ECS Application Auto Scaling] : check cooldown timer — expired                                                                 : before proceeding
+[ECS Application Auto Scaling] → [ECS Application Auto Scaling] : check current task count — above minimum (2)                                                    : before proceeding
+[ECS Application Auto Scaling] → [ECS]                  : decrease Processing Infrastructure desired count by 1                                                     : on all checks passed
+```
+
+##### Alerting Infrastructure
+
+```
+[CloudWatch] → [CloudWatch]                             : SQS Alert Queue depth below threshold for sustained period                                                : continuously monitored
+[CloudWatch] → [ECS Application Auto Scaling]           : Alert Queue depth below scale-down threshold                                                               : on sustained drop detected
+[ECS Application Auto Scaling] → [ECS Application Auto Scaling] : check cooldown timer — expired                                                                 : before proceeding
+[ECS Application Auto Scaling] → [ECS Application Auto Scaling] : check current task count — above minimum (2)                                                    : before proceeding
+[ECS Application Auto Scaling] → [ECS]                  : decrease Alerting Infrastructure desired count by 1                                                        : on all checks passed
+```
+
+> Scale-down removes one task at a time — never multiple tasks simultaneously. After each removal, the cooldown timer restarts. This prevents aggressive scale-in from destabilising the service.
+
+---
+
+#### ECS Scale-In Protection — Queue Consumers (Processing and Alerting Infra)
+
+> When ECS decides to terminate a task during scale-down, the task may be mid-processing an SQS message. Two mechanisms protect against message loss. **The same mechanics apply identically to both Processing Infrastructure and Alerting Infrastructure** — both are SQS queue consumers with the same graceful shutdown behaviour.
+
+```
+[ECS] → [Queue Consumer Task]                           : SIGTERM signal — stop gracefully                                                                          : on scale-in decision
+[Queue Consumer Task] → [Queue Consumer Task]           : stop polling SQS for new messages                                                                         : immediately on SIGTERM received
+[Queue Consumer Task] → [Queue Consumer Task]           : finish processing current message                                                                          : within stopTimeout window (60 seconds)
+[Queue Consumer Task] → [SQS]                           : delete processed message from queue                                                                        : on processing complete
+[Queue Consumer Task] → [ECS]                           : exit cleanly                                                                                               : on all in-flight work complete
+```
+
+> **stopTimeout** is set to 60 seconds — the maximum time ECS waits for a task to exit after sending SIGTERM. If the task does not exit within 60 seconds, ECS sends SIGKILL (forced termination).
+>
+> **SQS Visibility Timeout** is set to 60 seconds — if a task is killed mid-processing before deleting the message, the message becomes invisible for 60 seconds and then reappears in the queue. Another task picks it up. No message is ever lost. This is at-least-once delivery — a message may be processed twice in the worst case, but idempotency design (duplicate detection via timestamp range) handles this.
+>
+> This applies to: Processing Infrastructure (reads from Crash, Control, and LWT queues) and Alerting Infrastructure (reads from Alert Queue). Both services implement the same SIGTERM handler.
+
+#### ALB Connection Draining — Telemetry Infrastructure
+
+> When ECS removes a Telemetry Infra task during scale-down, the ALB drains in-flight HTTP connections before deregistering the task.
+
+```
+[ECS] → [ALB]                                           : deregister Telemetry Infrastructure task from target group                                                : on scale-in decision
+[ALB] → [ALB]                                           : stop routing NEW requests to deregistering task                                                            : immediately
+[ALB] → [Telemetry Infrastructure — Task]               : allow in-flight requests to complete within deregistration delay (300 seconds)                            : during draining window
+[Telemetry Infrastructure — Task] → [ECS]               : exit cleanly after all in-flight requests complete                                                        : on draining complete or timeout
+```
+
+> Telemetry batches are small, fast operations (write to DynamoDB, check for crash flag). In-flight requests complete in seconds. The 300-second deregistration delay is generous overhead — no telemetry batch is lost during scale-down.
+
+---
+
+#### Minimum Instance Floor
+
+```
+[ECS Application Auto Scaling] → [ECS Application Auto Scaling] : scale-in request would reduce task count below minimum (2) — rejected                           : on any scale-in attempt
+```
+
+> The minimum of 2 instances per service is a hard floor. ECS Application Auto Scaling enforces this via the `min_capacity` parameter on the auto-scaling target. No scaling policy, scheduled action, or reactive trigger can reduce task count below this value. This ensures basic redundancy at all times — if one task crashes, the other continues serving.
+
+---
+
+### Where Scaling Thresholds Live
+
+> **Scaling thresholds are NOT stored in Parameter Store.** They are infrastructure configuration, not application configuration.
+
+| Threshold Type | Where It Lives | Changed By |
+|---|---|---|
+| **Application thresholds** (crash detection, mass alert, firmware anomaly, battery %, TTL, cache refresh interval) | Parameter Store | Application code reads at runtime — can change without redeployment |
+| **Scaling thresholds** (ALB request count target, SQS queue depth target, CPU target %, DynamoDB RCU/WCU utilization target) | Auto-scaling policies in Terraform | `terraform apply` — infrastructure change via CI/CD pipeline |
+| **Scaling boundaries** (min/max instance count, cooldown period, stopTimeout, visibility timeout, deregistration delay) | ECS service and auto-scaling configuration in Terraform | `terraform apply` — infrastructure change via CI/CD pipeline |
+| **Scheduled scaling times** (06:45 AM, 04:45 PM, 10:30 AM, 09:30 PM) | Scheduled actions in Terraform | `terraform apply` — infrastructure change via CI/CD pipeline |
+
+> The distinction: your application code never reads scaling thresholds — AWS auto-scaling reads them directly from the policies you define in Terraform. Changing a scaling threshold is an infrastructure change, not an application change. It goes through the same CI/CD pipeline as any other Terraform modification (validate → plan → apply).
+
+---
+
+### Components That Do NOT Scale
+
+#### AWS IoT Core
+
+> Fully managed by AWS. Scales automatically to handle connection and message throughput. No capacity provisioning required. The only operational concern is **service quotas** — default limits on concurrent connections and messages per second per account. If the fleet exceeds default quotas, a quota increase is requested from AWS. Monitored via CloudWatch.
+
+#### SQS Queues
+
+> Fully managed by AWS. Unlimited throughput, unlimited queue depth. No capacity provisioning required. Queue depth is used as a **scaling signal** for consumer services (Processing and Alerting Infra), but SQS itself never needs scaling.
+
+#### Cold Storage
+
+> Low-frequency writes — incident records, logs, user data, firmware rollout records. Fixed provisioned capacity or DynamoDB on-demand mode is sufficient. Does not experience the traffic volume or variability that Hot Storage does.
+
+#### Monitoring Stack (Prometheus, Alertmanager, Grafana)
+
+> Single ECS instance. Prometheus scrapes ECS task health endpoints — the number of scrape targets is the number of ECS tasks (single-digit to low double-digit), not the number of helmets. CloudWatch handles IoT Core and DynamoDB metrics natively. For a portfolio project, a single monitoring instance is accepted as a known limitation.
+
+---
+
+### Scaling Configuration Summary
+
+| Component | Scales | Signal (Up) | Signal (Down) | Min | Max | Type |
+|---|---|---|---|---|---|---|
+| Telemetry Infra (ECS) | Yes | ALB request count per target above threshold | ALB request count per target below threshold (sustained) | 2 | 5 | Scheduled + Reactive |
+| Processing Infra (ECS) | Yes | Max SQS queue depth + CPU above 70% | All queue depths + CPU below threshold (sustained) | 2 | 5 | Scheduled + Reactive |
+| Alerting Infra (ECS) | Yes | SQS Alert Queue depth above threshold | Alert Queue depth below threshold (sustained) | 2 | 5 | Scheduled + Reactive |
+| Hot Storage (DynamoDB) | Yes | RCU/WCU utilization above 70% | RCU/WCU utilization below 70% (sustained) | N/A | N/A | DynamoDB auto-scaling |
+| IoT Core | No | AWS-managed | AWS-managed | — | — | — |
+| SQS Queues | No | AWS-managed | AWS-managed | — | — | — |
+| Cold Storage | No | Fixed / on-demand | N/A | — | — | — |
+| Monitoring Stack | No | Single instance | N/A | 1 | 1 | Known limitation |
+
+| Parameter | Value | Defined In |
+|---|---|---|
+| Cooldown period | 30 minutes | Terraform (auto-scaling policy) |
+| ECS stopTimeout | 60 seconds | Terraform (ECS task definition) |
+| SQS visibility timeout | 60 seconds | Terraform (SQS queue configuration) |
+| ALB deregistration delay | 300 seconds | Terraform (ALB target group) |
+| DynamoDB target utilization | 70% (read and write) | Terraform (DynamoDB auto-scaling policy) |
+| Scheduled scale-up | 06:45 AM and 04:45 PM daily | Terraform (scheduled scaling actions) |
+| Scheduled scale-down | 10:30 AM and 09:30 PM daily | Terraform (scheduled scaling actions) |
+| Min ECS tasks per service | 2 | Terraform (auto-scaling target min_capacity) |
+| Max ECS tasks per service | 5 | Terraform (auto-scaling target max_capacity) |
+
+---
+
+### Known Limitations
+
+#### Reactive scaling lag
+New ECS tasks take 60–90 seconds to start and register. During this window, existing tasks absorb the full load spike. Scheduled scaling mitigates this for predictable peaks, but unexpected spikes (mass crash event) will experience a brief period of elevated latency before new tasks are available.
+
+#### Cooldown values are not data-driven
+The 30-minute cooldown period is a reasonable default but is not tuned to actual traffic patterns. Production-grade deployment would use traffic analytics to determine optimal cooldown values per service.
+
+#### Monitoring stack does not scale
+A single Prometheus instance scrapes all ECS task endpoints. If the number of ECS tasks grows significantly beyond the portfolio project scope, Prometheus may need horizontal scaling (e.g., Thanos or Prometheus federation). Accepted as a known limitation for this project.
+
+#### DynamoDB auto-scaling has lag
+DynamoDB auto-scaling reacts to sustained utilization changes, not instantaneous spikes. A sudden burst of writes (e.g., mass crash event generating thousands of telemetry writes simultaneously) may experience throttling for 1–2 minutes before capacity adjusts. DynamoDB burst capacity (unused capacity credits) partially mitigates this.
+
+#### No auto-scaling for Step Functions
+Step Functions is serverless and handles concurrency automatically. However, the maximum concurrent executions per account is subject to AWS service quotas. A mass crash event generating hundreds of simultaneous alert workflows could hit this limit. Monitored via CloudWatch.
+
+#### Scale-down removes one task at a time
+By design, scale-down removes only one task per cooldown cycle. During a sharp traffic drop (e.g., all riders suddenly go offline), it takes multiple cooldown cycles to reach minimum capacity. This is intentionally conservative — aggressive scale-in risks destabilising services during transient dips.

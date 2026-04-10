@@ -457,6 +457,49 @@
 
 ---
 
+## Flow 11 — Scale Up / Scale Down
+
+**Precondition:** Fleet generates variable traffic. Rush hours (7–10 AM, 5–9 PM) = peak. Midday/overnight = off-peak. Infrastructure scales dynamically.
+
+**Two strategies combined:**
+- **Scheduled scaling** — pre-provisions capacity 15 min before known peaks (06:45 AM, 04:45 PM)
+- **Reactive scaling** — responds to live metrics for unexpected spikes
+
+**Scaling boundaries:** Min 2, Max 5 instances per ECS service. ~100 helmets for demo.
+
+**Traffic distribution — ALB:**
+- IoT Core rules engine → ALB (HTTP action) → Telemetry Infra ECS tasks (round-robin)
+- ALB provides health checks, traffic distribution, and connection draining on scale-down
+
+**Reactive scaling signals per component:**
+
+| Component | Signal | Notes |
+|---|---|---|
+| Telemetry Infra | ALB request count per target | Write-heavy, not compute-heavy — CPU is wrong signal |
+| Processing Infra | Max SQS queue depth (Crash/Control/LWT) + CPU at 70% | Dual signal — queue backlog + compute load |
+| Alerting Infra | SQS Alert Queue depth | Each message spawns Step Function — ECS doesn't wait |
+| Hot Storage (DynamoDB) | RCU/WCU utilization at 70% target | DynamoDB auto-scaling — storage is unlimited |
+
+**Scale-down safeguards:**
+- **Cooldown period:** 30 minutes — no scale-in during cooldown
+- **ECS stopTimeout:** 60 seconds — task finishes current message before exit
+- **SQS visibility timeout:** 60 seconds — if task killed mid-processing, message reappears for another task
+- **ALB deregistration delay:** 300 seconds — drains in-flight HTTP connections before removing task
+
+**Components that do NOT scale:**
+- IoT Core — AWS-managed, monitor service quotas only
+- SQS — AWS-managed, unlimited throughput
+- Cold Storage — low frequency, fixed/on-demand capacity
+- Monitoring Stack — single instance, known limitation
+
+**Key decisions:**
+- Telemetry Infra scales behind ALB (HTTP), not queue-based (SQS Telemetry Queue deferred to Future Enhancements)
+- DynamoDB confirmed for Hot Storage — auto-scaling RCU/WCU, native TTL for 24-hour expiry, unlimited storage
+- Step Functions handles alert concurrency — serverless, no ECS scaling needed for countdown orchestration
+- Prometheus scrapes ECS tasks (single-digit targets), NOT helmets — does not scale with fleet size
+
+---
+
 ## SQS Queue Summary (Quick Reference)
 
 | Queue | Source | Consumer | Retention | Purpose |
@@ -482,8 +525,11 @@
 | Firmware rollout lifecycle (staged install) | Flow 10 | Flow 9K |
 | Firmware anomaly detection (observation window) | Flow 9K Branch B | Flow 10 |
 | Firmware rollback mechanics | Flow 10 Branches B/C | Flow 9K |
+| ALB traffic distribution for Telemetry Infra | Flow 11 | All flows involving telemetry ingestion |
+| DynamoDB auto-scaling (Hot Storage) | Flow 11 | Flow 9I (Database Failure) |
+| ECS scale-in protection (SQS consumers) | Flow 11 | Flow 9F, 9G, 9H |
 
 ---
 
-*Reference card version: Post-Flow-10-Firmware-Update*
-*Last updated: 2026-04-09*
+*Reference card version: Post-Flow-11-Scale-Up-Scale-Down*
+*Last updated: 2026-04-10*

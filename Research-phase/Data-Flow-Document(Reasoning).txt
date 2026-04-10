@@ -425,3 +425,37 @@ The firmware update is the primary responsibility of the fleet manager, the flee
 the firmware update is rolled out using the AWS IOT device Management service, by deafult the updates are rolled out in the canary deployment
 and we initiate the rollback if there is a failure in the update rollout , the failure can be detected early and rolledback prevent the entire fleet from being affected
 the firmware version flag that is being sent by the helmet can be used to differentiate between the helmets on different versions
+
+
+Flow 11 — Scale Up / Scale Down
+
+With the increase in traffic we need to be able to scale up or scale down the infra as needed depending upon the time basically depends upon the traffic that is needed
+maybe during moringin office rush and office leaving the system will experience largest amount of traffic and during the mid day it will experience less traffic
+so we can scale up or scale down the infra as needed, the infra uder stress here will the IOT core expriencging the traffic flow from all the helmers with the telemetry
+we will have to scale the telemetry infra to handle all the telemetry data from IOT Core, the queue depth is possibly the maximum at this point
+the telemetry infra will have to write to both the hotsorage and the queue, in case of a crash the read and write to the cold storage will also increase
+the storage will experience read for the telemetry data of the premises in case of a crash event in the queue 
+the alert infra will also exprience traffic but not at much as the telemetry and processing infra and the read and write from the hotstorage 
+so the storage must not run out of space same the queue contains on the crash datapoint so not much data will go in it as much as it goes inside the 
+hotsorage we need a storage that will increate the read and write speed and also the storage capacity dynamically as needed when lets say the limit reaches 70% utilisation of read and write capacity 
+ie read capacity should increase if the read utilisation reaches 70% and write capacity should increase if the write utilisation reaches 70% and so on 
+
+the processing infra should scale if the cpu utilisation reaches 70% and the queue depth is increasing then more the number of the processing infra instances to read from the queue will need to be added
+
+for schedulded scaling we have times from 7-10am 5pm-9pm 
+reactive scaling can be different for each part of the infra 
+Scaledown cool down period can be of 30min(this is just a vague number a real prodcution grade values will depend probably on data analytics
+for accurate cool down periods ) 
+minimun instances needed will be 2 to avoid single point of failures
+telemetry infra will face max traffic from the IOT Core directly and need to write to hotstorage and the crash queue 
+so the write thoughput of the hotstorage should scale with the traffic of the telemetry infra, the telemetry infra performs the write operation
+into the hotstorage and the crash queue hence it wont need much processing infra but it will need to write  to hotstorage a lot 
+the question for the type of storage in hot storage is between the use of dynamo DB and timeseries based DB, i will use the dynamo DB to keep costs low and predicatable 
+cold storage probably can survive on fixed storage read and write speed
+alert infra will be responsible for alerting the next of kin and the emergency services for the porptfolio project i can probably use email rather an sms maybe send email to two different email ids, 
+alert infra will need  maximum parallel processing of the message in the alert queue to prevent the alert events from waiting in the queue for ever 
+
+the step functions can help in processing large number of events in the crash queue 
+
+the processing infra read from multiple queues hence it will depend upon the maximum depth of the queue and the cpu utilisation of the processing infra instances to make scaling decisons
+ also instead of a Queue between then the telemetry infra and the IOT Core an ALB can be used to direct traffic to the instances that are created for the HTTP requests 
