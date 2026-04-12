@@ -3369,3 +3369,12 @@ Step Functions is serverless and handles concurrency automatically. However, the
 
 #### Scale-down removes one task at a time
 By design, scale-down removes only one task per cooldown cycle. During a sharp traffic drop (e.g., all riders suddenly go offline), it takes multiple cooldown cycles to reach minimum capacity. This is intentionally conservative — aggressive scale-in risks destabilising services during transient dips.
+
+---
+
+## Future Enhancements (Post-MVP)
+
+### Dedicated Catch-Up Infrastructure (Lambda Architecture)
+Currently, live telemetry and catch-up buffer data share the same Telemetry Infrastructure and Hot Storage. For the MVP portfolio project, DynamoDB partition keys natively solve the query isolation problem, and traffic volume is manageable. However, at production scale (millions of data points), burst syncing of historical data could throttle live data ingestion. A future enhancement would implement two dedicated pipelines (Lambda Architecture):
+- **Speed Layer**: For live telemetry (low latency, high priority).
+- **Batch Layer**: Dedicated SQS queues and Hot Storage tables for catch-up data (high throughput, lower priority). This reduces cost by using cheaper DB write provisioning for delayed data and ensures buffer flushes never impact live crash detection.
