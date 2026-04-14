@@ -479,6 +479,22 @@
 >
 > This is the baseline crash detection and alert flow. All other flows that involve crash detection (Flow 4, Flow 6, Flow 7, Flow 8) reference this flow for core alert mechanics.
 
+### New Infrastructure Components
+
+> Two new components are introduced to support reliable cancel and override signal routing to horizontally-scaled Alerting Infrastructure ECS tasks.
+
+**SQS Alert Override Queue** — receives cancel and false positive override signals from the rider via IoT Core rules engine. Polled by Alerting Infrastructure alongside SQS Alert Queue.
+
+**DynamoDB — Execution Registry** — maps `helmet_id` to the ARN of the active Step Functions execution. Used by Alerting Infrastructure to terminate the correct Step Functions execution on cancel or override signal.
+
+| Field | Value |
+|---|---|
+| Partition Key | `helmet_id` |
+| Status | `PENDING` / execution ARN string / `CANCELLED` |
+| TTL | Unix timestamp — 60 seconds from write |
+
+**MQTT topic introduced:** `helmet/{helmet_id}/alert/override` — device-to-cloud, carries cancel and false positive override signals from Smartphone to IoT Core rules engine. Provisioned in Terraform alongside all other MQTT topics.
+
 ### Crash Detected by Edge Processing
 
 ```
@@ -551,10 +567,18 @@
 ##### Sub-branch — Rider Overrides (Requests Fresh Countdown)
 
 ```
-[Rider] → [Smartphone App]                        : override tap                                                    : within 5-second window
-[Smartphone] → [AWS IoT Core]                     : publish override signal via MQTT                                : immediately
-[AWS IoT Core] → [Alerting Infrastructure]        : route override signal                                           : immediately
-[Alerting Infrastructure] → [Alerting Infrastructure] : override received, start fresh 30-second countdown        : immediately
+[Rider] → [Smartphone App or Helmet HUD]          : override tap                                                    : within 5-second window
+[Smartphone] → [AWS IoT Core]                     : publish override signal via helmet/{helmet_id}/alert/override topic : immediately
+[AWS IoT Core] → [SQS Alert Override Queue]       : override signal, helmet_id, action type — override, timestamp  : via IoT Core rules engine
+[Alerting Infrastructure] → [SQS Alert Override Queue] : read override signal                                       : event-driven
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : look up helmet_id → execution ARN found              : immediately
+[Alerting Infrastructure] → [AWS Step Functions]  : StopExecution(ARN) — stop false positive window execution       : immediately
+[AWS Step Functions] → [AWS Step Functions]       : execution stopped                                               : immediately
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : delete helmet_id mapping                             : immediately
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : write helmet_id → PENDING status, TTL 60s            : immediately
+[Alerting Infrastructure] → [AWS Step Functions]  : StartExecution — fresh 30-second countdown, helmet_id, crash timestamp, incident location : immediately
+[AWS Step Functions] → [Alerting Infrastructure]  : returns execution ARN                                           : synchronously in HTTP response, milliseconds
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : update helmet_id → new execution ARN, TTL 60s        : immediately on ARN received
 ```
 
 > Proceed to Alert Countdown below.
@@ -599,25 +623,63 @@
 ### Alert Countdown
 
 ```
-[Processing Infrastructure] → [SQS Alert Queue]   : crash confirmed, alert type — standard, helmet ID, crash timestamp, incident location : on crash confirmation or rider override
+[Processing Infrastructure] → [SQS Alert Queue]       : crash confirmed, alert type — standard, helmet_id, crash timestamp, incident location : on crash confirmation or rider override
+[Alerting Infrastructure] → [SQS Alert Queue]         : read alert event, helmet_id, crash timestamp, alert type    : event-driven
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : write helmet_id → PENDING status, TTL 60s             : before StartExecution
+[Alerting Infrastructure] → [AWS Step Functions]      : StartExecution — 30-second countdown workflow, helmet_id, crash timestamp, incident location : immediately
+[AWS Step Functions] → [Alerting Infrastructure]      : returns execution ARN                                        : synchronously in HTTP response, milliseconds
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : update helmet_id → execution ARN, TTL 60s             : immediately on ARN received
+[Alerting Infrastructure] → [SQS Alert Queue]         : delete message                                              : immediately
+[Alerting Infrastructure] → [Alerting Infrastructure] : read next message from SQS Alert Queue                      : immediately — Step Functions runs countdown independently
+[AWS Step Functions] → [AWS IoT Core]                 : publish 30-second countdown, helmet_id, timestamp            : immediately on execution start
+[AWS IoT Core] → [Smartphone]                         : countdown message via MQTT topic                             : immediately
+[Smartphone App] → [Rider]                            : 30-second countdown — "Crash detected — cancel to abort alert" : immediately
+[Smartphone] → [Helmet HUD]                           : forward countdown via Bluetooth                              : immediately
+[Helmet HUD] → [Rider]                                : 30-second countdown — "Crash detected — cancel to abort alert" : immediately
 ```
-
-> Alerting Infrastructure reads from SQS Alert Queue and applies alert type determination. See Flow 3 — Alerting Infrastructure Alert Type Determination.
 
 
 #### Sub-branch — Rider Cancels Within Countdown
 
 ```
-[Rider] → [Smartphone App]                        : cancel                                                          : within 30-second window
-[Smartphone] → [AWS IoT Core]                     : publish cancel signal via MQTT                                  : immediately
-[AWS IoT Core] → [Alerting Infrastructure]        : route cancel signal                                             : immediately
-[Alerting Infrastructure] → [Alerting Infrastructure] : stop countdown                                              : immediately
-[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss countdown, helmet ID, timestamp                 : immediately
+[Rider] → [Smartphone App or Helmet HUD]          : cancel                                                          : within 30-second window
+[Smartphone] → [AWS IoT Core]                     : publish cancel signal via helmet/{helmet_id}/alert/override topic : immediately
+[AWS IoT Core] → [SQS Alert Override Queue]       : cancel signal, helmet_id, action type — cancel, timestamp       : via IoT Core rules engine
+[Alerting Infrastructure] → [SQS Alert Override Queue] : read cancel signal                                         : event-driven
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : look up helmet_id                                     : immediately
+```
+
+##### Case 1 — Execution ARN Found (Normal Case)
+
+```
+[DynamoDB — Execution Registry] → [Alerting Infrastructure] : execution ARN found                                   : immediately
+[Alerting Infrastructure] → [AWS Step Functions]  : StopExecution(ARN)                                              : immediately
+[AWS Step Functions] → [AWS Step Functions]       : execution stopped                                               : immediately
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : delete helmet_id mapping                              : immediately
+[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss countdown, helmet_id, timestamp                 : immediately
 [AWS IoT Core] → [Smartphone]                     : dismiss countdown message via MQTT topic                        : immediately
 [Smartphone App] → [Rider]                        : dismiss countdown                                               : immediately
 [Smartphone] → [Helmet HUD]                       : forward dismiss countdown via Bluetooth                         : immediately
 [Helmet HUD] → [Rider]                            : dismiss countdown                                               : immediately
-[Alerting Infrastructure] → [Cold Storage]        : cancelled alert record, helmet ID, crash timestamp, cancelled by rider : immediately
+[Alerting Infrastructure] → [Cold Storage]        : cancelled alert record, helmet_id, crash timestamp, cancelled by rider : immediately
+```
+
+##### Case 2 — PENDING Status Found (Cancel Arrived Before ARN Written)
+
+```
+[DynamoDB — Execution Registry] → [Alerting Infrastructure] : PENDING status found                                  : immediately
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : update helmet_id → CANCELLED flag                     : immediately
+[Alerting Infrastructure] → [Alerting Infrastructure] : StartExecution response arrives — execution ARN returned    : milliseconds later
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : check helmet_id — CANCELLED flag found                : immediately on ARN received
+[Alerting Infrastructure] → [AWS Step Functions]  : StopExecution(ARN)                                              : immediately
+[AWS Step Functions] → [AWS Step Functions]       : execution stopped                                               : immediately
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : delete helmet_id mapping                              : immediately
+[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss countdown, helmet_id, timestamp                 : immediately
+[AWS IoT Core] → [Smartphone]                     : dismiss countdown message via MQTT topic                        : immediately
+[Smartphone App] → [Rider]                        : dismiss countdown                                               : immediately
+[Smartphone] → [Helmet HUD]                       : forward dismiss countdown via Bluetooth                         : immediately
+[Helmet HUD] → [Rider]                            : dismiss countdown                                               : immediately
+[Alerting Infrastructure] → [Cold Storage]        : cancelled alert record, helmet_id, crash timestamp, cancelled by rider : immediately
 ```
 
 > No alert sent to Next of Kin or Emergency Services.
@@ -625,8 +687,11 @@
 #### Sub-branch — Rider Does Not Cancel — Alert Fires on Countdown Expiry
 
 ```
-[Alerting Infrastructure] → [Next of Kin]        : crash alert, incident location, current location, incident timestamp : on countdown expiry
-[Alerting Infrastructure] → [Emergency Services] : crash alert, incident location, current location, incident timestamp, next of kin contact : on countdown expiry, independent of Next of Kin channel
+[AWS Step Functions] → [AWS Step Functions]       : 30-second wait state expires, no StopExecution received          : on countdown expiry
+[AWS Step Functions] → [Alerting Infrastructure]  : countdown expired, helmet_id, crash timestamp, incident location : via Step Functions callback
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : delete helmet_id mapping                              : immediately
+[Alerting Infrastructure] → [Next of Kin]         : crash alert, incident location, current location, incident timestamp : immediately
+[Alerting Infrastructure] → [Emergency Services]  : crash alert, incident location, current location, incident timestamp, next of kin contact : immediately, independent of Next of Kin channel
 ```
 
 > Retries on each channel do not block the other.
@@ -762,14 +827,19 @@
 
 ```
 [Rider] → [Smartphone App or Helmet HUD]          : cancel                                                          : on rider action
-[Smartphone] → [AWS IoT Core]                     : publish cancel signal via MQTT                                  : immediately
-[AWS IoT Core] → [Alerting Infrastructure]        : route cancel signal                                             : immediately
-[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss notification, helmet ID, timestamp              : immediately
+[Smartphone] → [AWS IoT Core]                     : publish cancel signal via helmet/{helmet_id}/alert/override topic : immediately
+[AWS IoT Core] → [SQS Alert Override Queue]       : cancel signal, helmet_id, action type — cancel, timestamp       : via IoT Core rules engine
+[Alerting Infrastructure] → [SQS Alert Override Queue] : read cancel signal                                         : event-driven
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : look up helmet_id → execution ARN found              : immediately
+[Alerting Infrastructure] → [AWS Step Functions]  : StopExecution(ARN)                                              : immediately
+[AWS Step Functions] → [AWS Step Functions]       : execution stopped                                               : immediately
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : delete helmet_id mapping                              : immediately
+[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss notification, helmet_id, timestamp              : immediately
 [AWS IoT Core] → [Smartphone]                     : dismiss notification message via MQTT topic                     : immediately
 [Smartphone App] → [Rider]                        : dismiss notification                                            : immediately
 [Smartphone] → [Helmet HUD]                       : forward dismiss notification via Bluetooth                      : immediately
 [Helmet HUD] → [Rider]                            : dismiss notification                                            : immediately
-[Alerting Infrastructure] → [Cold Storage]        : incident log entry, helmet ID, crash timestamp, incident location, cancelled at, cancelled by rider : immediately
+[Alerting Infrastructure] → [Cold Storage]        : incident log entry, helmet_id, crash timestamp, incident location, cancelled at, cancelled by rider : immediately
 ```
 
 > No alert sent to Next of Kin or Emergency Services.
@@ -1079,14 +1149,19 @@
 
 ```
 [Rider] → [Smartphone App]                        : cancel                                                          : within 30-second window
-[Smartphone] → [AWS IoT Core]                     : publish cancel signal via MQTT                                  : immediately
-[AWS IoT Core] → [Alerting Infrastructure]        : route cancel signal                                             : immediately
-[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss countdown, helmet ID, timestamp                 : immediately
+[Smartphone] → [AWS IoT Core]                     : publish cancel signal via helmet/{helmet_id}/alert/override topic : immediately
+[AWS IoT Core] → [SQS Alert Override Queue]       : cancel signal, helmet_id, action type — cancel, timestamp       : via IoT Core rules engine
+[Alerting Infrastructure] → [SQS Alert Override Queue] : read cancel signal                                         : event-driven
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : look up helmet_id → execution ARN found              : immediately
+[Alerting Infrastructure] → [AWS Step Functions]  : StopExecution(ARN)                                              : immediately
+[AWS Step Functions] → [AWS Step Functions]       : execution stopped                                               : immediately
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : delete helmet_id mapping                              : immediately
+[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss countdown, helmet_id, timestamp                 : immediately
 [AWS IoT Core] → [Smartphone]                     : dismiss countdown message via MQTT topic                        : immediately
 [Smartphone App] → [Rider]                        : dismiss countdown                                               : immediately
 [Smartphone] → [Helmet HUD]                       : forward dismiss countdown via Bluetooth                         : immediately
 [Helmet HUD] → [Rider]                            : dismiss countdown if still active                               : immediately
-[Alerting Infrastructure] → [Cold Storage]        : cancelled alert record, helmet ID, crash timestamp, cancelled by rider, battery death context : immediately
+[Alerting Infrastructure] → [Cold Storage]        : cancelled alert record, helmet_id, crash timestamp, cancelled by rider, battery death context : immediately
 ```
 
 > No alert sent to Next of Kin or Emergency Services.
@@ -1219,12 +1294,17 @@
 
 ```
 [Rider] → [Smartphone App]                        : cancel                                                          : within 30-second window
-[Smartphone] → [AWS IoT Core]                     : publish cancel signal via MQTT                                  : immediately
-[AWS IoT Core] → [Alerting Infrastructure]        : route cancel signal                                             : immediately
-[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss countdown, helmet ID, timestamp                 : immediately
+[Smartphone] → [AWS IoT Core]                     : publish cancel signal via helmet/{helmet_id}/alert/override topic : immediately
+[AWS IoT Core] → [SQS Alert Override Queue]       : cancel signal, helmet_id, action type — cancel, timestamp       : via IoT Core rules engine
+[Alerting Infrastructure] → [SQS Alert Override Queue] : read cancel signal                                         : event-driven
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : look up helmet_id → execution ARN found              : immediately
+[Alerting Infrastructure] → [AWS Step Functions]  : StopExecution(ARN)                                              : immediately
+[AWS Step Functions] → [AWS Step Functions]       : execution stopped                                               : immediately
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : delete helmet_id mapping                              : immediately
+[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss countdown, helmet_id, timestamp                 : immediately
 [AWS IoT Core] → [Smartphone]                     : dismiss countdown message via MQTT topic                        : immediately
 [Smartphone App] → [Rider]                        : dismiss countdown                                               : immediately
-[Alerting Infrastructure] → [Cold Storage]        : cancelled alert record, helmet ID, crash timestamp, cancelled by rider, LWT context : immediately
+[Alerting Infrastructure] → [Cold Storage]        : cancelled alert record, helmet_id, crash timestamp, cancelled by rider, LWT context : immediately
 ```
 
 > No alert sent to Next of Kin or Emergency Services.
@@ -1603,14 +1683,19 @@
 
 ```
 [Rider] → [Smartphone App or Helmet HUD]                  : cancel                                                                                      : on rider action
-[Smartphone] → [AWS IoT Core]                             : publish cancel signal via MQTT                                                              : immediately
-[AWS IoT Core] → [Alerting Infrastructure]                : route cancel signal                                                                         : immediately
-[Alerting Infrastructure] → [AWS IoT Core]                : publish dismiss notification, helmet ID, timestamp                                          : immediately
+[Smartphone] → [AWS IoT Core]                             : publish cancel signal via helmet/{helmet_id}/alert/override topic                           : immediately
+[AWS IoT Core] → [SQS Alert Override Queue]               : cancel signal, helmet_id, action type — cancel, timestamp                                  : via IoT Core rules engine
+[Alerting Infrastructure] → [SQS Alert Override Queue]    : read cancel signal                                                                          : event-driven
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : look up helmet_id → execution ARN found                                                  : immediately
+[Alerting Infrastructure] → [AWS Step Functions]          : StopExecution(ARN)                                                                          : immediately
+[AWS Step Functions] → [AWS Step Functions]               : execution stopped                                                                            : immediately
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : delete helmet_id mapping                                                                  : immediately
+[Alerting Infrastructure] → [AWS IoT Core]                : publish dismiss notification, helmet_id, timestamp                                          : immediately
 [AWS IoT Core] → [Smartphone]                             : dismiss notification message via MQTT topic                                                 : immediately
 [Smartphone App] → [Rider]                                : dismiss notification                                                                        : immediately
 [Smartphone] → [Helmet HUD]                               : forward dismiss notification via Bluetooth                                                  : immediately
 [Helmet HUD] → [Rider]                                    : dismiss notification                                                                        : immediately
-[Alerting Infrastructure] → [Cold Storage]                : cancelled alert record, helmet ID, crash timestamp, cancelled by rider after hold expiry     : immediately
+[Alerting Infrastructure] → [Cold Storage]                : cancelled alert record, helmet_id, crash timestamp, cancelled by rider after hold expiry    : immediately
 ```
 
 > No alert fired.
@@ -1654,7 +1739,8 @@
 
 ```
 [Smartphone] → [AWS IoT Core]             : bluetooth disconnected event, helmet ID, timestamp                      : immediately via helmet/{helmet_id}/bluetooth_disconnected topic
-[AWS IoT Core] → [Processing Infrastructure] : bluetooth disconnected event, helmet ID, timestamp                   : immediately via IoT Core rules engine
+[AWS IoT Core] → [SQS Control Queue]      : bluetooth disconnected event, helmet ID, timestamp                      : immediately via IoT Core rules engine
+[Processing Infrastructure] → [SQS Control Queue] : read bluetooth disconnected event data point                    : event-driven
 [Processing Infrastructure] → [Processing Infrastructure] : check last telemetry for crash flag, helmet ID          : immediately on bluetooth disconnected event received
 ```
 
@@ -1695,7 +1781,8 @@
 [Helmet HUD] → [Rider]                    : "Bluetooth restored — systems operational"                              : immediately
 
 [Smartphone] → [AWS IoT Core]             : bluetooth restored event, helmet ID, timestamp                          : immediately via helmet/{helmet_id}/bluetooth_restored topic
-[AWS IoT Core] → [Processing Infrastructure] : bluetooth restored event, helmet ID, timestamp                       : immediately via IoT Core rules engine
+[AWS IoT Core] → [SQS Control Queue]      : bluetooth restored event, helmet ID, timestamp                          : immediately via IoT Core rules engine
+[Processing Infrastructure] → [SQS Control Queue] : read bluetooth restored event data point                        : event-driven
 [Processing Infrastructure] → [Processing Infrastructure] : mark helmet as bluetooth restored, helmet ID, timestamp : immediately
 ```
 
