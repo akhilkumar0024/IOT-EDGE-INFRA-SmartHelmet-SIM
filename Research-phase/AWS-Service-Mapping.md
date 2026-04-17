@@ -14,7 +14,7 @@ This document maps the logical architecture blocks defined in the Data Flow Docu
 
 | Logical Component | Physical AWS Service | Reason / Justification |
 | :--- | :--- | :--- |
-| **Telemetry Infrastructure** | **Amazon ECS (Fargate)** | Receives massive telemetry batches. Needs fast, stateless HTTP handling. Fargate provides serverless container execution that scales horizontally via ALB. |
+| **Telemetry Infrastructure** | **Amazon ECS (Fargate)** | Receives massive telemetry batches. Needs fast, stateless HTTP handling. Operates a single ingestion path with internal logic to prioritize 'Live' flags over 'Catch-up' syncs for resource efficiency. |
 | **Processing Infrastructure** | **Amazon ECS (Fargate)** | Queue consumer. Reads from Crash, Control, and LWT SQS queues. Validates crash logic using DynamoDB querying. Fits well into a worker-container model. |
 | **Alerting Infrastructure** | **Amazon ECS (Fargate)** | Queue consumer for confirmed alerts. Triggers Step Functions workflows. Needs background processing capabilities. |
 | **Alert Lifecycle Manager** | **AWS Step Functions** | Handles the 30-second countdown and 5-second false-positive override windows natively. Manages state transitions and wait timers efficiently without consuming long-running container CPU. |
@@ -27,6 +27,7 @@ This document maps the logical architecture blocks defined in the Data Flow Docu
 | **Control Queue** | **Amazon SQS** | Standard queue. Handles graceful shutdown and low battery events. |
 | **LWT Queue** | **Amazon SQS** | Standard queue. Captures unexpected dropouts emitted by IoT Core. |
 | **Alert Queue** | **Amazon SQS** | Standard queue. Buffers confirmed crash alerts prior to Delivery (Alerting Infra). |
+| **Override Queue** | **Amazon SQS** | Receives cancel and false-positive override signals from the rider. Polled by Alerting Infra to interrupt active State Machine workflows. |
 | **Dead Letter Queues (DLQ)** | **Amazon SQS** | For all queues above, catches unprocessable messages/poison pills to prevent queue blocking. |
 
 ## 4. Storage Layer
@@ -35,6 +36,7 @@ This document maps the logical architecture blocks defined in the Data Flow Docu
 | :--- | :--- | :--- |
 | **Hot Storage** | **Amazon DynamoDB** | Highly performant NoSQL table. Partition key: `Helmet_ID`, Sort key: `Timestamp`. Handles high write velocity natively. TTL feature automates the 24-hour retention requirement. |
 | **Cold Storage** | **Amazon DynamoDB** | Separate NoSQL table (On-Demand capacity). Persistent storage for rider info, emergency contacts, event logs, and false positive records. |
+| **Execution Registry** | **Amazon DynamoDB** | Key-store mapping `helmet_id` to active Step Function execution ARNs. Enables distributed tasks to cancel the correct alert countdown. |
 | **Firmware Storage** | **Amazon S3** | Object storage for storing binary firmware packages pushed during OTA updates. |
 
 ## 5. Configuration Layer

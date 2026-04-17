@@ -483,7 +483,7 @@
 
 > Two new components are introduced to support reliable cancel and override signal routing to horizontally-scaled Alerting Infrastructure ECS tasks.
 
-**SQS Alert Override Queue** — receives cancel and false positive override signals from the rider via IoT Core rules engine. Polled by Alerting Infrastructure alongside SQS Alert Queue.
+**Override Queue (SQS)** — receives cancel and false positive override signals from the rider via IoT Core rules engine. Polled by Alerting Infrastructure alongside SQS Alert Queue.
 
 **DynamoDB — Execution Registry** — maps `helmet_id` to the ARN of the active Step Functions execution. Used by Alerting Infrastructure to terminate the correct Step Functions execution on cancel or override signal.
 
@@ -491,9 +491,23 @@
 |---|---|
 | Partition Key | `helmet_id` |
 | Status | `PENDING` / execution ARN string / `CANCELLED` |
-| TTL | Unix timestamp — 60 seconds from write |
+| TTL | Unix timestamp — set per workflow type at write time. False positive: 60s (5s window + 55s buffer). Standard: 60s (30s countdown + 30s buffer). Retrospective: 360s (5min timeout + 60s buffer). TTL acts as garbage collector — explicit deletion also performed by Step Functions on completion or cancellation as belt-and-suspenders cleanup. |
 
-**MQTT topic introduced:** `helmet/{helmet_id}/alert/override` — device-to-cloud, carries cancel and false positive override signals from Smartphone to IoT Core rules engine. Provisioned in Terraform alongside all other MQTT topics.
+**MQTT topics introduced:**
+- `helmet/{helmet_id}/alert/override` — device-to-cloud, carries cancel and false positive override signals from Smartphone to IoT Core rules engine.
+- `helmet/{helmet_id}/alert/status` — cloud-to-device, carries all alert-related messages (countdowns, dismiss, retrospective notifications) from Step Functions to Smartphone.
+
+> Both provisioned in Terraform alongside all other MQTT topics.
+
+**Step Functions Workflow Types:**
+
+> All three alert types are handled by the same Step Functions state machine definition with different input parameters. Step Functions owns all IoT Core publishes and Cold Storage audit writes via **SDK Integration steps** — native Step Functions capability to call AWS service APIs (DynamoDB PutItem, IoT Core Publish, etc.) directly from the state machine definition without Lambda or any compute. Each API call is defined in the state machine ASL (Amazon States Language) JSON within Terraform. Alerting Infrastructure is a stateless dispatcher — it starts and stops executions but never waits on timers or writes audit records.
+
+| Workflow Type | Wait Duration | On Timeout | On StopExecution |
+|---|---|---|---|
+| **False Positive** | 5 seconds (Parameter Store) | Dismiss silently, write false positive log to Cold Storage | Start fresh 30-second countdown (rider override) |
+| **Standard** | 30 seconds (Parameter Store) | Fire alert to Next of Kin + Emergency Services, write incident record to Cold Storage | Write cancellation record to Cold Storage |
+| **Retrospective** | 5 minutes (Parameter Store) | Fire alert (lean toward safety), write incident record to Cold Storage | Write cancellation record to Cold Storage |
 
 ### Crash Detected by Edge Processing
 
@@ -537,7 +551,7 @@
 
 ### Alerting Infrastructure Alert Type Determination
 
-> This block runs every time Alerting Infrastructure reads an event from SQS Alert Queue, across all flows.
+> This block runs every time Alerting Infrastructure reads an event from SQS Alert Queue, across all flows. Alerting Infrastructure is a stateless dispatcher — it starts Step Functions executions and moves on. Step Functions owns all timers, IoT Core publishes, and Cold Storage audit writes.
 
 ```
 [Alerting Infrastructure] → [SQS Alert Queue]     : read alert event data point                                        : event-driven
@@ -547,19 +561,30 @@
 #### Label — False Positive
 
 ```
-[Alerting Infrastructure] → [AWS IoT Core]        : publish 5-second override window, helmet ID, timestamp          : immediately
-[AWS IoT Core] → [Smartphone]                     : override message via MQTT topic                                 : immediately
-[Smartphone App] → [Rider]                        : 5-second override window — "False positive detected"              : immediately
-[Smartphone] → [Helmet HUD]                       : forward override message via Bluetooth                          : immediately
-[Helmet HUD] → [Rider]                            : 5-second override window — "False positive detected"              : immediately
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : write helmet_id → PENDING status, TTL 60s             : before StartExecution
+[Alerting Infrastructure] → [AWS Step Functions]      : StartExecution — 5-second override window workflow, helmet_id, crash timestamp : immediately
+[AWS Step Functions] → [Alerting Infrastructure]      : returns execution ARN                                        : synchronously in HTTP response, milliseconds
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : update helmet_id → execution ARN, TTL 60s             : immediately on ARN received
+[Alerting Infrastructure] → [SQS Alert Queue]         : delete message                                              : immediately
+[Alerting Infrastructure] → [Alerting Infrastructure] : read next message from SQS Alert Queue                      : immediately — Step Functions runs 5-second window independently
+[AWS Step Functions] → [AWS IoT Core]                 : publish 5-second override window, helmet_id, timestamp       : immediately on execution start, via helmet/{helmet_id}/alert/status topic
+[AWS IoT Core] → [Smartphone]                         : override message via helmet/{helmet_id}/alert/status topic   : immediately
+[Smartphone App] → [Rider]                            : 5-second override window — "False positive detected"           : immediately
+[Smartphone] → [Helmet HUD]                           : forward override message via Bluetooth                       : immediately
+[Helmet HUD] → [Rider]                                : 5-second override window — "False positive detected"           : immediately
 ```
 
 ##### Sub-branch — Rider Does Nothing (Override Window Expires)
 
 ```
-[Smartphone App] → [Rider]                        : dismiss notification                                            : on 5-second window expiry
-[Helmet HUD] → [Rider]                            : dismiss notification                                            : on 5-second window expiry
-[Alerting Infrastructure] → [Cold Storage]        : false positive log entry, helmet ID, crash timestamp, reason, no override : on 5-second window expiry
+[AWS Step Functions] → [AWS Step Functions]       : 5-second wait state expires, no StopExecution received          : on window expiry
+[AWS Step Functions] → [AWS IoT Core]             : publish dismiss notification, helmet_id, timestamp              : via helmet/{helmet_id}/alert/status topic
+[AWS IoT Core] → [Smartphone]                     : dismiss message via helmet/{helmet_id}/alert/status topic       : immediately
+[Smartphone App] → [Rider]                        : dismiss notification                                            : immediately
+[Smartphone] → [Helmet HUD]                       : forward dismiss via Bluetooth                                  : immediately
+[Helmet HUD] → [Rider]                            : dismiss notification                                            : immediately
+[AWS Step Functions] → [Cold Storage]             : false positive log entry, helmet ID, crash timestamp, reason, no override : SDK Integration step
+[AWS Step Functions] → [DynamoDB — Execution Registry] : delete helmet_id mapping                                  : SDK Integration step
 ```
 
 > No alert sent.
@@ -569,24 +594,20 @@
 ```
 [Rider] → [Smartphone App or Helmet HUD]          : override tap                                                    : within 5-second window
 [Smartphone] → [AWS IoT Core]                     : publish override signal via helmet/{helmet_id}/alert/override topic : immediately
-[AWS IoT Core] → [SQS Alert Override Queue]       : override signal, helmet_id, action type — override, timestamp  : via IoT Core rules engine
-[Alerting Infrastructure] → [SQS Alert Override Queue] : read override signal                                       : event-driven
+[AWS IoT Core] → [Override Queue]                 : override signal, helmet_id, action type — override, timestamp  : via IoT Core rules engine
+[Alerting Infrastructure] → [Override Queue]       : read override signal                                           : event-driven
 [Alerting Infrastructure] → [DynamoDB — Execution Registry] : look up helmet_id → execution ARN found              : immediately
 [Alerting Infrastructure] → [AWS Step Functions]  : StopExecution(ARN) — stop false positive window execution       : immediately
-[AWS Step Functions] → [AWS Step Functions]       : execution stopped                                               : immediately
+[AWS Step Functions] → [Cold Storage]             : false positive overridden by rider, helmet_id, crash timestamp  : SDK Integration step (on StopExecution catch)
 [Alerting Infrastructure] → [DynamoDB — Execution Registry] : delete helmet_id mapping                             : immediately
-[Alerting Infrastructure] → [DynamoDB — Execution Registry] : write helmet_id → PENDING status, TTL 60s            : immediately
-[Alerting Infrastructure] → [AWS Step Functions]  : StartExecution — fresh 30-second countdown, helmet_id, crash timestamp, incident location : immediately
-[AWS Step Functions] → [Alerting Infrastructure]  : returns execution ARN                                           : synchronously in HTTP response, milliseconds
-[Alerting Infrastructure] → [DynamoDB — Execution Registry] : update helmet_id → new execution ARN, TTL 60s        : immediately on ARN received
 ```
 
-> Proceed to Alert Countdown below.
+> Proceed to Alert Countdown below — Alerting Infra starts a fresh 30-second countdown execution.
 
 #### Label — Retrospective
 
 ```
-[Alerting Infrastructure] → [Alerting Infrastructure] : alert type is retrospective — proceed to retrospective notification : immediately
+[Alerting Infrastructure] → [Alerting Infrastructure] : alert type is retrospective — proceed to retrospective workflow : immediately
 ```
 
 > Proceed to Retrospective Alert. See Flow 4 — Retrospective Alert.
@@ -599,16 +620,7 @@
 
 ##### Within Threshold — Run Countdown
 
-```
-[Alerting Infrastructure] → [AWS IoT Core]        : publish 30-second countdown, helmet ID, timestamp               : immediately
-[AWS IoT Core] → [Smartphone]                     : countdown message via MQTT topic                                : immediately
-[Smartphone App] → [Rider]                        : 30-second countdown — "Crash detected — cancel to abort alert"    : immediately
-[Smartphone] → [Helmet HUD]                       : forward countdown via Bluetooth                                 : immediately
-[Helmet HUD] → [Rider]                            : 30-second countdown — "Crash detected — cancel to abort alert"    : immediately
-```
-
-> Cloud owns the countdown. Countdown displayed on both devices simultaneously.
-> Rider cancels from either device — only one cancel needed. Proceed to Alert Countdown cancel and fire branches. See Flow 3 — Alert Countdown.
+> Proceed to Alert Countdown below.
 
 ##### Beyond Threshold — Downgrade to Retrospective
 
@@ -631,8 +643,8 @@
 [Alerting Infrastructure] → [DynamoDB — Execution Registry] : update helmet_id → execution ARN, TTL 60s             : immediately on ARN received
 [Alerting Infrastructure] → [SQS Alert Queue]         : delete message                                              : immediately
 [Alerting Infrastructure] → [Alerting Infrastructure] : read next message from SQS Alert Queue                      : immediately — Step Functions runs countdown independently
-[AWS Step Functions] → [AWS IoT Core]                 : publish 30-second countdown, helmet_id, timestamp            : immediately on execution start
-[AWS IoT Core] → [Smartphone]                         : countdown message via MQTT topic                             : immediately
+[AWS Step Functions] → [AWS IoT Core]                 : publish 30-second countdown, helmet_id, timestamp            : immediately on execution start, via helmet/{helmet_id}/alert/status topic
+[AWS IoT Core] → [Smartphone]                         : countdown message via helmet/{helmet_id}/alert/status topic  : immediately
 [Smartphone App] → [Rider]                            : 30-second countdown — "Crash detected — cancel to abort alert" : immediately
 [Smartphone] → [Helmet HUD]                           : forward countdown via Bluetooth                              : immediately
 [Helmet HUD] → [Rider]                                : 30-second countdown — "Crash detected — cancel to abort alert" : immediately
@@ -644,8 +656,8 @@
 ```
 [Rider] → [Smartphone App or Helmet HUD]          : cancel                                                          : within 30-second window
 [Smartphone] → [AWS IoT Core]                     : publish cancel signal via helmet/{helmet_id}/alert/override topic : immediately
-[AWS IoT Core] → [SQS Alert Override Queue]       : cancel signal, helmet_id, action type — cancel, timestamp       : via IoT Core rules engine
-[Alerting Infrastructure] → [SQS Alert Override Queue] : read cancel signal                                         : event-driven
+[AWS IoT Core] → [Override Queue]                 : cancel signal, helmet_id, action type — cancel, timestamp       : via IoT Core rules engine
+[Alerting Infrastructure] → [Override Queue]       : read cancel signal                                              : event-driven
 [Alerting Infrastructure] → [DynamoDB — Execution Registry] : look up helmet_id                                     : immediately
 ```
 
@@ -654,14 +666,13 @@
 ```
 [DynamoDB — Execution Registry] → [Alerting Infrastructure] : execution ARN found                                   : immediately
 [Alerting Infrastructure] → [AWS Step Functions]  : StopExecution(ARN)                                              : immediately
-[AWS Step Functions] → [AWS Step Functions]       : execution stopped                                               : immediately
-[Alerting Infrastructure] → [DynamoDB — Execution Registry] : delete helmet_id mapping                              : immediately
-[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss countdown, helmet_id, timestamp                 : immediately
-[AWS IoT Core] → [Smartphone]                     : dismiss countdown message via MQTT topic                        : immediately
+[AWS Step Functions] → [AWS IoT Core]             : publish dismiss countdown, helmet_id, timestamp                 : via helmet/{helmet_id}/alert/status topic (on StopExecution catch)
+[AWS IoT Core] → [Smartphone]                     : dismiss countdown via helmet/{helmet_id}/alert/status topic     : immediately
 [Smartphone App] → [Rider]                        : dismiss countdown                                               : immediately
 [Smartphone] → [Helmet HUD]                       : forward dismiss countdown via Bluetooth                         : immediately
 [Helmet HUD] → [Rider]                            : dismiss countdown                                               : immediately
-[Alerting Infrastructure] → [Cold Storage]        : cancelled alert record, helmet_id, crash timestamp, cancelled by rider : immediately
+[AWS Step Functions] → [Cold Storage]             : cancelled alert record, helmet_id, crash timestamp, cancelled by rider : SDK Integration step
+[AWS Step Functions] → [DynamoDB — Execution Registry] : delete helmet_id mapping                                  : SDK Integration step
 ```
 
 ##### Case 2 — PENDING Status Found (Cancel Arrived Before ARN Written)
@@ -672,14 +683,13 @@
 [Alerting Infrastructure] → [Alerting Infrastructure] : StartExecution response arrives — execution ARN returned    : milliseconds later
 [Alerting Infrastructure] → [DynamoDB — Execution Registry] : check helmet_id — CANCELLED flag found                : immediately on ARN received
 [Alerting Infrastructure] → [AWS Step Functions]  : StopExecution(ARN)                                              : immediately
-[AWS Step Functions] → [AWS Step Functions]       : execution stopped                                               : immediately
-[Alerting Infrastructure] → [DynamoDB — Execution Registry] : delete helmet_id mapping                              : immediately
-[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss countdown, helmet_id, timestamp                 : immediately
-[AWS IoT Core] → [Smartphone]                     : dismiss countdown message via MQTT topic                        : immediately
+[AWS Step Functions] → [AWS IoT Core]             : publish dismiss countdown, helmet_id, timestamp                 : via helmet/{helmet_id}/alert/status topic (on StopExecution catch)
+[AWS IoT Core] → [Smartphone]                     : dismiss countdown via helmet/{helmet_id}/alert/status topic     : immediately
 [Smartphone App] → [Rider]                        : dismiss countdown                                               : immediately
 [Smartphone] → [Helmet HUD]                       : forward dismiss countdown via Bluetooth                         : immediately
 [Helmet HUD] → [Rider]                            : dismiss countdown                                               : immediately
-[Alerting Infrastructure] → [Cold Storage]        : cancelled alert record, helmet_id, crash timestamp, cancelled by rider : immediately
+[AWS Step Functions] → [Cold Storage]             : cancelled alert record, helmet_id, crash timestamp, cancelled by rider : SDK Integration step
+[AWS Step Functions] → [DynamoDB — Execution Registry] : delete helmet_id mapping                                  : SDK Integration step
 ```
 
 > No alert sent to Next of Kin or Emergency Services.
@@ -688,33 +698,18 @@
 
 ```
 [AWS Step Functions] → [AWS Step Functions]       : 30-second wait state expires, no StopExecution received          : on countdown expiry
-[AWS Step Functions] → [Alerting Infrastructure]  : countdown expired, helmet_id, crash timestamp, incident location : via Step Functions callback
-[Alerting Infrastructure] → [DynamoDB — Execution Registry] : delete helmet_id mapping                              : immediately
-[Alerting Infrastructure] → [Next of Kin]         : crash alert, incident location, current location, incident timestamp : immediately
-[Alerting Infrastructure] → [Emergency Services]  : crash alert, incident location, current location, incident timestamp, next of kin contact : immediately, independent of Next of Kin channel
+[AWS Step Functions] → [Cold Storage]             : query next of kin and emergency contacts for helmet_id           : SDK Integration step
+[AWS Step Functions] → [Next of Kin]              : crash alert, incident location, current location, incident timestamp : SDK Integration step
+[AWS Step Functions] → [Emergency Services]       : crash alert, incident location, current location, incident timestamp, next of kin contact : SDK Integration step, independent of Next of Kin channel
+[AWS Step Functions] → [DynamoDB — Execution Registry] : delete helmet_id mapping                                  : SDK Integration step
 ```
 
-> Retries on each channel do not block the other.
+> Retries on each channel do not block the other. Step Functions handles retries natively via retry configuration on each SDK Integration step.
 
-##### Delivery Success
-
-```
-[Next of Kin] → [Alerting Infrastructure]        : acknowledgement                                                  : on receiving alert
-[Emergency Services] → [Alerting Infrastructure] : acknowledgement                                                  : on receiving alert
-[Alerting Infrastructure] → [Cold Storage]       : delivery success log, helmet ID, channel, timestamp              : on each acknowledgement
-```
-
-##### Delivery Failure
+##### Delivery Logging
 
 ```
-[Alerting Infrastructure] → [Alerting Infrastructure] : retry alert, channel                                        : on no acknowledgement received
-[Alerting Infrastructure] → [Cold Storage]       : delivery failure log, helmet ID, channel, attempt number, timestamp : on each failed attempt
-```
-
-##### Storage — Written Regardless of Outcome
-
-```
-[Alerting Infrastructure] → [Cold Storage]       : incident record, helmet ID, crash timestamp, incident location, current location at alert time, cancellation or delivery outcome per channel : immediately on resolution
+[AWS Step Functions] → [Cold Storage]             : incident record, helmet ID, crash timestamp, incident location, current location at alert time, delivery outcome per channel : SDK Integration step, written regardless of delivery success or failure
 ```
 
 ---
@@ -811,67 +806,75 @@
 [Processing Infrastructure] → [SQS Alert Queue]         : crash confirmed, alert type — retrospective, helmet ID, crash timestamp, incident location from buffer, current location from phone : on crash confirmation
 ```
 
-> Alerting Infrastructure reads from SQS Alert Queue. Label is retrospective — persistent notification shown immediately. See Flow 3 — Alerting Infrastructure Alert Type Determination.
+> Alerting Infrastructure reads from SQS Alert Queue. Label is retrospective. Alerting Infra starts a Step Functions execution with a configurable timeout (default 5 minutes from Parameter Store). See Flow 3 — Alerting Infrastructure Alert Type Determination.
 
 ```
-[Alerting Infrastructure] → [AWS IoT Core]        : publish persistent notification, helmet ID, timestamp           : immediately
-[AWS IoT Core] → [Smartphone]                     : persistent notification message via MQTT topic                  : immediately
-[Smartphone App] → [Rider]                        : persistent notification — "Crash detected at [timestamp] — Alert emergency services?"                  : immediately
-[Smartphone] → [Helmet HUD]                       : forward persistent notification via Bluetooth                   : immediately
-[Helmet HUD] → [Rider]                            : persistent notification — "Crash detected at [timestamp] — Alert emergency services?"                  : immediately
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : write helmet_id → PENDING status, TTL 360s (timeout + buffer) : before StartExecution
+[Alerting Infrastructure] → [AWS Step Functions]      : StartExecution — retrospective workflow, helmet_id, crash timestamp, incident location : immediately
+[AWS Step Functions] → [Alerting Infrastructure]      : returns execution ARN                                        : synchronously in HTTP response, milliseconds
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : update helmet_id → execution ARN, TTL 360s             : immediately on ARN received
+[Alerting Infrastructure] → [SQS Alert Queue]         : delete message                                              : immediately
+[Alerting Infrastructure] → [Alerting Infrastructure] : read next message from SQS Alert Queue                      : immediately — Step Functions runs retrospective workflow independently
+[AWS Step Functions] → [AWS IoT Core]                 : publish persistent notification, helmet_id, crash timestamp   : immediately on execution start, via helmet/{helmet_id}/alert/status topic
+[AWS IoT Core] → [Smartphone]                         : persistent notification via helmet/{helmet_id}/alert/status topic : immediately
+[Smartphone App] → [Rider]                            : persistent notification — "Crash detected at [timestamp] — Alert emergency services?" : immediately
+[Smartphone] → [Helmet HUD]                           : forward persistent notification via Bluetooth                : immediately
+[Helmet HUD] → [Rider]                                : persistent notification — "Crash detected at [timestamp] — Alert emergency services?" : immediately
 ```
 
-> No countdown. Notification persists until rider explicitly acts from either device.
+> No countdown. Notification persists until rider explicitly acts or timeout expires.
 
 #### Sub-branch — Rider Cancels
 
 ```
 [Rider] → [Smartphone App or Helmet HUD]          : cancel                                                          : on rider action
 [Smartphone] → [AWS IoT Core]                     : publish cancel signal via helmet/{helmet_id}/alert/override topic : immediately
-[AWS IoT Core] → [SQS Alert Override Queue]       : cancel signal, helmet_id, action type — cancel, timestamp       : via IoT Core rules engine
-[Alerting Infrastructure] → [SQS Alert Override Queue] : read cancel signal                                         : event-driven
+[AWS IoT Core] → [Override Queue]                 : cancel signal, helmet_id, action type — cancel, timestamp       : via IoT Core rules engine
+[Alerting Infrastructure] → [Override Queue]       : read cancel signal                                              : event-driven
 [Alerting Infrastructure] → [DynamoDB — Execution Registry] : look up helmet_id → execution ARN found              : immediately
 [Alerting Infrastructure] → [AWS Step Functions]  : StopExecution(ARN)                                              : immediately
-[AWS Step Functions] → [AWS Step Functions]       : execution stopped                                               : immediately
-[Alerting Infrastructure] → [DynamoDB — Execution Registry] : delete helmet_id mapping                              : immediately
-[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss notification, helmet_id, timestamp              : immediately
-[AWS IoT Core] → [Smartphone]                     : dismiss notification message via MQTT topic                     : immediately
+[AWS Step Functions] → [AWS IoT Core]             : publish dismiss notification, helmet_id, timestamp              : via helmet/{helmet_id}/alert/status topic (on StopExecution catch)
+[AWS IoT Core] → [Smartphone]                     : dismiss notification via helmet/{helmet_id}/alert/status topic  : immediately
 [Smartphone App] → [Rider]                        : dismiss notification                                            : immediately
 [Smartphone] → [Helmet HUD]                       : forward dismiss notification via Bluetooth                      : immediately
 [Helmet HUD] → [Rider]                            : dismiss notification                                            : immediately
-[Alerting Infrastructure] → [Cold Storage]        : incident log entry, helmet_id, crash timestamp, incident location, cancelled at, cancelled by rider : immediately
+[AWS Step Functions] → [Cold Storage]             : incident log entry, helmet_id, crash timestamp, incident location, cancelled by rider : SDK Integration step
+[AWS Step Functions] → [DynamoDB — Execution Registry] : delete helmet_id mapping                                  : SDK Integration step
 ```
 
 > No alert sent to Next of Kin or Emergency Services.
 
-#### Sub-branch — Rider Confirms or Does Not Respond
+#### Sub-branch — Rider Confirms
 
 ```
-[Alerting Infrastructure] → [Next of Kin]         : crash alert, incident location, current location, incident timestamp                                   : immediately on confirm or no response
-[Alerting Infrastructure] → [Emergency Services]  : crash alert, incident location, current location, incident timestamp, speed at time of crash, next of kin contact : immediately, independent of Next of Kin channel
+[Rider] → [Smartphone App or Helmet HUD]          : confirm                                                         : on rider action
+[Smartphone] → [AWS IoT Core]                     : publish confirm signal via helmet/{helmet_id}/alert/override topic : immediately
+[AWS IoT Core] → [Override Queue]                 : confirm signal, helmet_id, action type — confirm, timestamp     : via IoT Core rules engine
+[Alerting Infrastructure] → [Override Queue]       : read confirm signal                                             : event-driven
+[Alerting Infrastructure] → [DynamoDB — Execution Registry] : look up helmet_id → execution ARN found              : immediately
+[Alerting Infrastructure] → [AWS Step Functions]  : StopExecution(ARN)                                              : immediately
+[AWS Step Functions] → [Cold Storage]             : query next of kin and emergency contacts for helmet_id           : SDK Integration step (on StopExecution catch)
+[AWS Step Functions] → [Next of Kin]              : crash alert, incident location, current location, incident timestamp : SDK Integration step
+[AWS Step Functions] → [Emergency Services]       : crash alert, incident location, current location, incident timestamp, next of kin contact : SDK Integration step, independent of Next of Kin channel
+[AWS Step Functions] → [DynamoDB — Execution Registry] : delete helmet_id mapping                                  : SDK Integration step
 ```
 
-> Retries on each channel do not block the other.
-
-##### Delivery Success
+#### Sub-branch — Rider Does Not Respond (Timeout Expires)
 
 ```
-[Next of Kin] → [Alerting Infrastructure]         : acknowledgement                                                 : on receiving alert
-[Emergency Services] → [Alerting Infrastructure]  : acknowledgement                                                 : on receiving alert
-[Alerting Infrastructure] → [Cold Storage]        : delivery success log, helmet ID, channel, timestamp             : on each acknowledgement
+[AWS Step Functions] → [AWS Step Functions]       : 5-minute wait state expires, no StopExecution received           : on timeout expiry
+[AWS Step Functions] → [Cold Storage]             : query next of kin and emergency contacts for helmet_id           : SDK Integration step
+[AWS Step Functions] → [Next of Kin]              : crash alert, incident location, current location, incident timestamp : SDK Integration step — lean toward safety
+[AWS Step Functions] → [Emergency Services]       : crash alert, incident location, current location, incident timestamp, next of kin contact : SDK Integration step, independent of Next of Kin channel
+[AWS Step Functions] → [DynamoDB — Execution Registry] : delete helmet_id mapping                                  : SDK Integration step
 ```
 
-##### Delivery Failure
+> Retries on each delivery channel handled natively by Step Functions retry configuration.
+
+##### Delivery Logging
 
 ```
-[Alerting Infrastructure] → [Alerting Infrastructure] : retry alert, channel                                        : on no acknowledgement received
-[Alerting Infrastructure] → [Cold Storage]        : delivery failure log, helmet ID, channel, attempt number, timestamp : on each failed attempt
-```
-
-##### Storage — Written Regardless of Outcome
-
-```
-[Alerting Infrastructure] → [Cold Storage]        : incident record, helmet ID, crash timestamp, incident location, current location at alert time, confirmation or cancellation, delivery outcome per channel : immediately on resolution
+[AWS Step Functions] → [Cold Storage]             : incident record, helmet ID, crash timestamp, incident location, current location at alert time, confirmation or timeout trigger, delivery outcome per channel : SDK Integration step, written regardless of delivery success or failure
 ```
 
 ---
@@ -1144,35 +1147,8 @@
 
 > Helmet may power down during countdown — smartphone carries countdown alone if helmet dies.
 > Cloud owns the countdown regardless of helmet status.
-
-##### Rider Cancels from Smartphone
-
-```
-[Rider] → [Smartphone App]                        : cancel                                                          : within 30-second window
-[Smartphone] → [AWS IoT Core]                     : publish cancel signal via helmet/{helmet_id}/alert/override topic : immediately
-[AWS IoT Core] → [SQS Alert Override Queue]       : cancel signal, helmet_id, action type — cancel, timestamp       : via IoT Core rules engine
-[Alerting Infrastructure] → [SQS Alert Override Queue] : read cancel signal                                         : event-driven
-[Alerting Infrastructure] → [DynamoDB — Execution Registry] : look up helmet_id → execution ARN found              : immediately
-[Alerting Infrastructure] → [AWS Step Functions]  : StopExecution(ARN)                                              : immediately
-[AWS Step Functions] → [AWS Step Functions]       : execution stopped                                               : immediately
-[Alerting Infrastructure] → [DynamoDB — Execution Registry] : delete helmet_id mapping                              : immediately
-[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss countdown, helmet_id, timestamp                 : immediately
-[AWS IoT Core] → [Smartphone]                     : dismiss countdown message via MQTT topic                        : immediately
-[Smartphone App] → [Rider]                        : dismiss countdown                                               : immediately
-[Smartphone] → [Helmet HUD]                       : forward dismiss countdown via Bluetooth                         : immediately
-[Helmet HUD] → [Rider]                            : dismiss countdown if still active                               : immediately
-[Alerting Infrastructure] → [Cold Storage]        : cancelled alert record, helmet_id, crash timestamp, cancelled by rider, battery death context : immediately
-```
-
-> No alert sent to Next of Kin or Emergency Services.
-
-##### Rider Does Not Cancel — Alert Fires
-
-```
-[Alerting Infrastructure] → [Next of Kin]         : crash alert, incident location, current location, incident timestamp : on countdown expiry
-[Alerting Infrastructure] → [Emergency Services]  : crash alert, incident location, current location, incident timestamp, next of kin contact : on countdown expiry, independent of Next of Kin channel
-[Alerting Infrastructure] → [Cold Storage]        : incident record, helmet ID, crash timestamp, incident location, delivery outcome per channel : on resolution
-```
+>
+> Full alert countdown mechanics — cancel, fire, dismiss, and audit logging — run identically to Flow 3 — Alert Countdown. Step Functions owns the countdown timer, IoT Core publishes via `helmet/{helmet_id}/alert/status`, and Cold Storage writes. Battery death context is included in the Step Functions execution input.
 
 ##### Shutdown Acknowledgement — Sent After Alert Mechanics Initiated, Not Blocked by Alert Outcome
 
@@ -1290,45 +1266,11 @@
 > Smartphone carries the countdown — 30 seconds acts as cancellation window.
 > If smartphone or helmet comes back online within countdown — rider can cancel manually.
 
-##### Rider Cancels from Smartphone Within Countdown
-
-```
-[Rider] → [Smartphone App]                        : cancel                                                          : within 30-second window
-[Smartphone] → [AWS IoT Core]                     : publish cancel signal via helmet/{helmet_id}/alert/override topic : immediately
-[AWS IoT Core] → [SQS Alert Override Queue]       : cancel signal, helmet_id, action type — cancel, timestamp       : via IoT Core rules engine
-[Alerting Infrastructure] → [SQS Alert Override Queue] : read cancel signal                                         : event-driven
-[Alerting Infrastructure] → [DynamoDB — Execution Registry] : look up helmet_id → execution ARN found              : immediately
-[Alerting Infrastructure] → [AWS Step Functions]  : StopExecution(ARN)                                              : immediately
-[AWS Step Functions] → [AWS Step Functions]       : execution stopped                                               : immediately
-[Alerting Infrastructure] → [DynamoDB — Execution Registry] : delete helmet_id mapping                              : immediately
-[Alerting Infrastructure] → [AWS IoT Core]        : publish dismiss countdown, helmet_id, timestamp                 : immediately
-[AWS IoT Core] → [Smartphone]                     : dismiss countdown message via MQTT topic                        : immediately
-[Smartphone App] → [Rider]                        : dismiss countdown                                               : immediately
-[Alerting Infrastructure] → [Cold Storage]        : cancelled alert record, helmet_id, crash timestamp, cancelled by rider, LWT context : immediately
-```
-
-> No alert sent to Next of Kin or Emergency Services.
-
-##### Rider Does Not Cancel — Alert Fires on Countdown Expiry
-
-```
-[Alerting Infrastructure] → [Next of Kin]         : crash alert, incident location, current location, incident timestamp : on countdown expiry
-[Alerting Infrastructure] → [Emergency Services]  : crash alert, incident location, current location, incident timestamp, next of kin contact : on countdown expiry, independent of Next of Kin channel
-[Alerting Infrastructure] → [Cold Storage]        : incident record, helmet ID, crash timestamp, incident location, delivery outcome per channel : on resolution
-```
-
----
-
-### Smartphone Unreachable During Countdown
-
-> Cloud runs countdown anyway — no cancel signal received.
-
-```
-[Alerting Infrastructure] → [Alerting Infrastructure] : countdown expired, no cancel signal received, smartphone unreachable : on countdown expiry
-[Alerting Infrastructure] → [Next of Kin]         : crash alert, incident location, current location, incident timestamp : immediately
-[Alerting Infrastructure] → [Emergency Services]  : crash alert, incident location, current location, incident timestamp, next of kin contact : immediately, independent of Next of Kin channel
-[Alerting Infrastructure] → [Cold Storage]        : incident record, helmet ID, crash timestamp, incident location, smartphone unreachable at time of alert, delivery outcome per channel : on resolution
-```
+> Full alert countdown mechanics — cancel, fire, dismiss, and audit logging — run identically to Flow 3 — Alert Countdown. Step Functions owns the countdown timer, IoT Core publishes via `helmet/{helmet_id}/alert/status`, and Cold Storage writes. LWT context is included in the Step Functions execution input.
+>
+> Helmet is gone — HUD notification may not be deliverable. Smartphone carries the countdown. If smartphone or helmet comes back online within countdown, rider can cancel manually.
+>
+> If smartphone is unreachable during countdown, Step Functions runs countdown to expiry regardless — no cancel signal received. Alert fires on timeout. Step Functions writes incident record to Cold Storage with smartphone-unreachable context.
 
 #### Smartphone Comes Back Online After Alert Already Fired
 
@@ -1569,9 +1511,9 @@
 > Triggered when Processing Infrastructure holds alerts and Fleet Manager is paged. Riders mid-ride are notified immediately on both devices.
 
 ```
-[Processing Infrastructure] → [Alerting Infrastructure]   : hold all dispersed alerts, fleet-wide issue detected, firmware version, timestamp          : immediately on hold initiated
-[Alerting Infrastructure] → [AWS IoT Core]                : publish maintenance notification, all affected helmet IDs, timestamp                        : immediately
-[AWS IoT Core] → [Smartphone]                             : maintenance message via MQTT topic                                                          : immediately to all affected smartphones
+[Processing Infrastructure] → [Monitoring Infrastructure]  : hold all dispersed alerts, fleet-wide issue detected, firmware version, timestamp          : immediately on hold initiated
+[Monitoring Infrastructure] → [AWS IoT Core]              : publish maintenance notification, all affected helmet IDs, timestamp                        : immediately, via helmet/{helmet_id}/infra/status topic per affected helmet
+[AWS IoT Core] → [Smartphone]                             : maintenance message via helmet/{helmet_id}/infra/status topic                               : immediately to all affected smartphones
 [Smartphone App] → [Rider]                                : "Fleet-wide issue detected — alert systems under maintenance, please ride with caution"     : immediately
 [Smartphone] → [Helmet HUD]                               : forward maintenance message via Bluetooth                                                   : immediately
 [Helmet HUD] → [Rider]                                    : "Fleet-wide issue detected — alert systems under maintenance"                               : immediately
@@ -1598,9 +1540,13 @@
 [Fleet Manager] → [Fleet Management System]               : confirm firmware bug, initiate rollback, firmware version, timestamp                        : on investigation complete
 [Fleet Management System] → [Processing Infrastructure]   : firmware bug confirmed, discard all held alerts for affected firmware version, timestamp    : immediately
 [Processing Infrastructure] → [SQS Alert Queue]           : false positive confirmed, alert type — false_positive, reason — firmware bug confirmed, helmet IDs, firmware version : immediately per held alert
-[Alerting Infrastructure] → [Cold Storage]                : false positive log entry per held alert, helmet ID, crash timestamp, reason — firmware bug confirmed, firmware version, discarded at : immediately on read
-[Alerting Infrastructure] → [AWS IoT Core]                : publish issue resolved notification, all affected helmet IDs, timestamp                     : immediately
-[AWS IoT Core] → [Smartphone]                             : issue resolved message via MQTT topic                                                       : immediately to all affected smartphones
+```
+
+> Alerting Infrastructure reads each false positive event from SQS Alert Queue. Step Functions writes false positive log entries to Cold Storage via SDK Integration step. See Flow 3 — Alerting Infrastructure Alert Type Determination (Label — False Positive).
+
+```
+[Monitoring Infrastructure] → [AWS IoT Core]              : publish issue resolved notification, all affected helmet IDs, timestamp                      : immediately, via helmet/{helmet_id}/infra/status topic per affected helmet
+[AWS IoT Core] → [Smartphone]                             : issue resolved message via helmet/{helmet_id}/infra/status topic                            : immediately to all affected smartphones
 [Smartphone App] → [Rider]                                : "Fleet-wide issue resolved — alert systems restored"                                        : immediately
 [Smartphone] → [Helmet HUD]                               : forward issue resolved message via Bluetooth                                                : immediately
 [Helmet HUD] → [Rider]                                    : "Fleet-wide issue resolved — alert systems restored"                                        : immediately
@@ -1658,56 +1604,9 @@
 [Processing Infrastructure] → [SQS Alert Queue]           : cannot validate — alert type — retrospective, helmet ID, crash timestamp, incident location from held alert : immediately
 ```
 
-> Alerting Infrastructure reads from SQS Alert Queue. Label is retrospective — persistent notification shown immediately.
-
-```
-[Alerting Infrastructure] → [AWS IoT Core]                : publish persistent notification, helmet ID, timestamp                                       : immediately
-[AWS IoT Core] → [Smartphone]                             : persistent notification message via MQTT topic                                              : immediately
-[Smartphone App] → [Rider]                                : persistent notification — "A crash alert from [timestamp] could not be verified — do you want to alert emergency services?" : immediately
-[Smartphone] → [Helmet HUD]                               : forward persistent notification via Bluetooth                                               : immediately
-[Helmet HUD] → [Rider]                                    : persistent notification — "Crash alert from [timestamp] unverified — see smartphone app"    : immediately if helmet still online
-```
-
-##### Rider Confirms
-
-```
-[Rider] → [Smartphone App or Helmet HUD]                  : confirm                                                                                     : on rider action
-[Smartphone] → [AWS IoT Core]                             : publish confirm signal via MQTT                                                             : immediately
-[AWS IoT Core] → [Alerting Infrastructure]                : route confirm signal                                                                        : immediately
-[Alerting Infrastructure] → [Next of Kin]                 : crash alert, incident location from held alert, current location, incident timestamp        : immediately
-[Alerting Infrastructure] → [Emergency Services]          : crash alert, incident location from held alert, current location, incident timestamp, next of kin contact : immediately, independent of Next of Kin channel
-[Alerting Infrastructure] → [Cold Storage]                : incident record, helmet ID, crash timestamp, incident location, confirmed by rider after hold expiry, delivery outcome per channel : on resolution
-```
-
-##### Rider Cancels
-
-```
-[Rider] → [Smartphone App or Helmet HUD]                  : cancel                                                                                      : on rider action
-[Smartphone] → [AWS IoT Core]                             : publish cancel signal via helmet/{helmet_id}/alert/override topic                           : immediately
-[AWS IoT Core] → [SQS Alert Override Queue]               : cancel signal, helmet_id, action type — cancel, timestamp                                  : via IoT Core rules engine
-[Alerting Infrastructure] → [SQS Alert Override Queue]    : read cancel signal                                                                          : event-driven
-[Alerting Infrastructure] → [DynamoDB — Execution Registry] : look up helmet_id → execution ARN found                                                  : immediately
-[Alerting Infrastructure] → [AWS Step Functions]          : StopExecution(ARN)                                                                          : immediately
-[AWS Step Functions] → [AWS Step Functions]               : execution stopped                                                                            : immediately
-[Alerting Infrastructure] → [DynamoDB — Execution Registry] : delete helmet_id mapping                                                                  : immediately
-[Alerting Infrastructure] → [AWS IoT Core]                : publish dismiss notification, helmet_id, timestamp                                          : immediately
-[AWS IoT Core] → [Smartphone]                             : dismiss notification message via MQTT topic                                                 : immediately
-[Smartphone App] → [Rider]                                : dismiss notification                                                                        : immediately
-[Smartphone] → [Helmet HUD]                               : forward dismiss notification via Bluetooth                                                  : immediately
-[Helmet HUD] → [Rider]                                    : dismiss notification                                                                        : immediately
-[Alerting Infrastructure] → [Cold Storage]                : cancelled alert record, helmet_id, crash timestamp, cancelled by rider after hold expiry    : immediately
-```
-
-> No alert fired.
-
-##### Rider Unreachable
-
-```
-[Alerting Infrastructure] → [Alerting Infrastructure]     : no rider response, smartphone unreachable                                                   : on notification delivery failure
-[Alerting Infrastructure] → [Cold Storage]                : unresolved alert record, helmet ID, crash timestamp, incident location, rider unreachable, no alert fired : immediately
-```
-
-> No alert fired. Incident logged to cold storage for Fleet Manager review.
+> Alerting Infrastructure reads from SQS Alert Queue. Label is retrospective. Full retrospective alert mechanic runs — Step Functions starts a configurable timeout workflow (default 5 minutes), publishes persistent notification via `helmet/{helmet_id}/alert/status`, and handles confirm, cancel, and timeout outcomes. See Flow 4 — Retrospective Alert.
+>
+> Held alert context (hold duration, firmware investigation outcome) is included in the Step Functions execution input and written to the Cold Storage audit record.
 
 ---
 
@@ -2266,17 +2165,19 @@
 
 ### Mid-Countdown Failure
 
-> If Alerting Infrastructure fails while a 30-second countdown is already in progress:
+> If Alerting Infrastructure fails while a 30-second countdown is already in progress, the **Step Functions execution continues running independently**. The countdown timer, IoT Core publishes, and Cold Storage audit writes are all owned by Step Functions — none depend on Alerting Infrastructure being alive.
 
 ```
 [Monitoring Infrastructure] → [AWS IoT Core]       : publish infra down status, helmet ID, timestamp               : on failure confirmed
 [AWS IoT Core] → [Smartphone]                      : infra down status message                                      : via helmet/{helmet_id}/infra/status topic
-[Smartphone App] → [Rider]                         : "Alert system offline — countdown cancelled, emergency services cannot be contacted" : immediately
+[Smartphone App] → [Rider]                         : "Alert system offline — active countdowns continue, new alerts paused" : immediately
 [Smartphone] → [Helmet HUD]                        : infra down status, helmet ID, timestamp                        : immediately via Bluetooth
-[Helmet HUD] → [Rider]                             : "Alert system offline — countdown cancelled, emergency services cannot be contacted" : immediately
+[Helmet HUD] → [Rider]                             : "Alert system offline — active countdowns continue, new alerts paused" : immediately
 ```
 
-> The in-progress crash event data point remains in SQS Alert Queue and is processed on recovery. Alert type determination runs at read time — see Flow 3 — Alerting Infrastructure Alert Type Determination.
+> **Active countdown continues:** Step Functions owns the 30-second wait state. If the rider cancels during the outage, the cancel signal reaches the Override Queue but Alerting Infrastructure is not reading it — the cancel is not processed until recovery. If the countdown expires during the outage, Step Functions fires the alert to Next of Kin and Emergency Services directly via SDK Integration steps — no Alerting Infrastructure involvement required.
+>
+> **New crashes during outage:** Crash events accumulate in SQS Alert Queue unread. 14-day SQS retention ensures no event is lost. On recovery, Alerting Infrastructure drains the queue and alert type determination runs at read time — see Flow 3.
 
 ---
 
