@@ -1,0 +1,93 @@
+graph TB
+    %% Styling Classes
+    classDef vpc fill:#FDFDFD,stroke:#FF9900,stroke-width:3px,stroke-dasharray: 6 6;
+    classDef pubSubnet fill:#E2F0D9,stroke:#548235,stroke-width:2px;
+    classDef privSubnet fill:#DEEBF7,stroke:#2E75B6,stroke-width:2px;
+    classDef managed fill:#FFF2CC,stroke:#D6B656,stroke-width:2px;
+    classDef internet fill:#F2F2F2,stroke:#A6A6A6,stroke-width:2px;
+
+    %% 1. Internet & Edge Devices
+    subgraph External ["Public Internet / Edge"]
+        Smartphone["Smartphone App"]
+        ThirdParty["Emergency Services (API)<br>PagerDuty (API)"]
+    end
+
+    %% 2. AWS Edge Services (Public Facing, Managed)
+    subgraph AWSEdge ["AWS Public Zone (Edge Services)"]
+        IOT["AWS IoT Core (MQTT over mTLS)"]
+    end
+
+    %% 3. The Custom Network (VPC)
+    subgraph VPC ["Virtual Private Cloud (VPC) - 10.0.0.0/16"]
+        
+        %% Availability Zone A
+        subgraph AZA ["Availability Zone A (us-east-1a)"]
+            
+            subgraph PubA ["Public Subnet A - 10.0.1.0/24"]
+                NATA["NAT Gateway A"]
+            end
+            
+            subgraph PrivA ["Private Subnet A - 10.0.2.0/24"]
+                ALBA["Internal Application Load Balancer"]
+                ECSA["ECS Fargate Tasks<br>(Telemetry, Processing, Alerting)"]
+            end
+        end
+
+        %% Availability Zone B
+        subgraph AZB ["Availability Zone B (us-east-1b)"]
+            
+            subgraph PubB ["Public Subnet B - 10.0.3.0/24"]
+                NATB["NAT Gateway B"]
+            end
+            
+            subgraph PrivB ["Private Subnet B - 10.0.4.0/24"]
+                ALBB["Internal Application Load Balancer"]
+                ECSB["ECS Fargate Tasks<br>(Telemetry, Processing, Alerting)"]
+            end
+        end
+
+        %% VPC Endpoints for PrivateLink
+        subgraph Endpoints ["VPC Endpoints (AWS PrivateLink)"]
+            VPCE_SQS["Interface Endpoint (SQS)"]
+            VPCE_SFN["Interface Endpoint (Step Functions)"]
+            VPCE_DDB["Gateway Endpoint (DynamoDB)"]
+        end
+
+    end
+
+    %% 4. Private AWS Managed Services (No internet traversal)
+    subgraph AWSBackend ["AWS Managed Serverless Backend"]
+        SFN["AWS Step Functions"]
+        SQS["Amazon SQS Queues"]
+        DDB["Amazon DynamoDB Tables"]
+    end
+
+    %% Network Routing Paths
+    
+    %% Inbound Path (Lockdown)
+    Smartphone -- "Secure Device Data" --> IOT
+    IOT -- "VPC Action Rule<br>(Private Network Interface)" --> ALBA
+    IOT -- "VPC Action Rule<br>(Private Network Interface)" --> ALBB
+    
+    %% Internal Load Balancing
+    ALBA --> ECSA
+    ALBB --> ECSB
+
+    %% VPC to Managed Services Path (PrivateLink)
+    ECSA & ECSB -- "AWS Backbone (No Public Internet)" --> Endpoints
+    Endpoints --> VPCE_SQS & VPCE_DDB & VPCE_SFN
+    VPCE_SQS --> SQS
+    VPCE_DDB --> DDB
+    VPCE_SFN --> SFN
+
+    %% Outbound Third-Party API Path
+    ECSA -- "External Webhooks<br>(Outbound only)" --> NATA
+    ECSB -- "External Webhooks<br>(Outbound only)" --> NATB
+    NATA & NATB -- "Internet Gateway" --> ThirdParty
+
+    %% Apply Styles
+    class VPC vpc;
+    class PubA,PubB pubSubnet;
+    class PrivA,PrivB privSubnet;
+    class AWSEdge,AWSBackend managed;
+    class External internet;
