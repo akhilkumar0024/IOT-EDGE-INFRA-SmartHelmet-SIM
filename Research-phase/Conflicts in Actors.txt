@@ -1,0 +1,59 @@
+Conflict 1 — Helmet vs Smartphone ownership of cloud communication
+Helmet actor says:
+Ability to communicate with Telemetry Infrastructure
+Smartphone actor says:
+Smartphone is what will be sending data to Telemetry Infrastructure
+
+Answer : I think the helmet should use the Smartphone to send the traffic to the Telemetry Infrastructure. but it should have a backup comm link to 
+telemetry infra in case Smartphone fails(but this is future scope as implementation of internet comms will increase the cost and complexity of the project)
+maybe i should stick to the Smartphone as the main comm link to telemetry infra. but this is a scenario where the actual harware is present since we will be using 
+a python script to simulate the helmet we can have helmet communicate directly with the telemetry infra.
+
+
+Conflict 2 — Who triggers the 30-second alert window
+Edge Processing (Helmet) sends crash event → but the 30-second countdown and cancel mechanism involves both Helmet HUD and Smartphone app simultaneously.
+The conflict: if Smartphone is dead, can the rider cancel from the Helmet alone? Currently no actor owns this answer. Both Helmet and Smartphone actors are silent on what happens when the other is unavailable during the countdown.
+
+Answer : 
+The flow is helmet mounted sensors determine a crash make a request to the smartphone to send the  alert. 
+the smartphone will then send a request to the telemetry infrastructure, the processing infra will act to determine if the alert is real or a false positive 
+if the smartphone is dead, the alerts or any telemetry data will not be sent to the telemetry infrastructure. 
+but the cancellation of alert can be done from any of the two, helmet or smartphone. 
+thats why i said smartphone is the single point point of failure between the helmet and the telemetry infrastructure.
+but having backup comms in the helmet will add to the cost and complexity of the project and such redundancy is not required for now
+maybe in an actual hardware implementation, but of as an next update certainly not in this simulation
+
+
+Conflict 3 — Fleet Manager vs Infrastructure Engineer on firmware updates
+Fleet Manager needs:
+Ability to push firmware updates to helmets
+Infrastructure Engineer needs:
+Push updates to helmet or infra, rollback changes
+Both actors own firmware updates. In practice these should be separated:
+Infrastructure Engineer  →  owns infra code, CI/CD pipeline, AWS config
+Fleet Manager            →  owns helmet firmware, rollout strategy, fleet state
+If both can push firmware independently you have no single owner when a bad update ships. Ownership conflict needs resolving before architecture.
+
+Answer : 
+Ok its as you said infrastructure engineer will be responsible for the infrastructure code, ci/cd pipeline, aws config
+and fleet manager will be responsible for the helmet firmware, rollout strategy, fleet state
+both can have their own pipelines to push the updates or rollbacks, 
+fleet manager will use telemetry infra to push the updates to the helmet firmware
+and infrastructure engineer will use the cloud where the infra is hosted to update the infrastructure
+
+Conflict 4 — Processing Infrastructure and Alerting Infrastructure on false positives
+Processing Infrastructure says it validates crash events and filters false positives before forwarding to Alerting Infrastructure.
+But Alerting Infrastructure has its own deduplication fear.
+The question is: where does false positive filtering live?
+Option A: Processing Infra filters → only genuine crashes reach Alerting Infra
+Option B: Both filter independently → double safety but unclear ownership
+Currently both actors imply they own part of this. Pick one primary owner.
+
+Answer :
+maybe i need to simplify the roles of the actors 
+the Alerting infrastructure will be responsible for sending the alerts to the next of kin and emergency services
+and the processing infrastructure will be responsible for filtering the false positives and forwarding the genuine alerts to the alerting infra to send alers to next of kin and emergency services
+processing infra will  the brain that determines all the processing of data, filtering out false positives and forwarding the genuine alerts to the alerting infra
+alert infra will make sure not to send a duplicate alerts/spam alerts it will see wether the alerts are responded to ignored(the link or button of acknowledgement i talked about)
+
+
