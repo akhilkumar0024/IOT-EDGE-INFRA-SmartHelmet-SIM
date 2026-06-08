@@ -1,1 +1,26 @@
 Project-Context-Universal.md
+
+# --- Terraform Exclusions ---
+
+# Local directory containing provider plugins and modules (downloaded during terraform init)
+.terraform/
+
+# Terraform state files (contain current infrastructure configuration and potentially sensitive metadata)
+*.tfstate
+*.tfstate.backup
+*.tfstate.lock.info
+
+# Variables files (often contain sensitive environmental data or secrets)
+# We ignore *.tfvars. If you want to check in non-sensitive defaults, use .tfvars.example files.
+*.tfvars
+*.tfvars.json
+
+# Override files (local overrides that shouldn't be committed)
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI configuration files
+.terraformrc
+terraform.rc
