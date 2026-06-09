@@ -4,7 +4,7 @@ variable "vpc-cidr" {
   default     = "10.0.0.0/16"
 }
 
-variable "public-subnets" {
+variable "public-subnets-CIDR-AZ" {
   description = "CIDR blocks and AZ for the publuc subnets"
   type = map(object({
     az   = string
