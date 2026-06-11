@@ -1,6 +1,6 @@
 region       = "ap-south-1"
 project-name = "smart_helemet_infra"
-environment  = "dev"
+environment  = "development"
 
 vpc-cidr = "10.0.0.0/16"
 
@@ -15,3 +15,7 @@ public-subnets-CIDR-AZ = {
   }
 }
 
+
+hot-storage-name        = "hot-storage"
+cold-storage-name       = "cold-storage"
+execution-registry-name = "execution-registry"
