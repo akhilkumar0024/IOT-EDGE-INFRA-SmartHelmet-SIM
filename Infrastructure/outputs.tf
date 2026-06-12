@@ -107,3 +107,12 @@ output "override-queue-information" {
     dlq_arn   = module.messaging.override-dlq-arn
   }
 }
+
+output "compute-iam-roles" {
+  description = "IAM Role ARNs for the compute infrastructure"
+  value = {
+    telemetry_role_arn  = module.compute.telemetry-infra-role-arn
+    processing_role_arn = module.compute.processing-infra-role-arn
+    alert_role_arn      = module.compute.alert-infra-role-arn
+  }
+}
