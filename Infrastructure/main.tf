@@ -15,3 +15,8 @@ module "database" {
   cold-storage-name       = var.cold-storage-name
   execution-registry-name = var.execution-registry-name
 }
+
+module "messaging" {
+  source = "./modules/messaging"
+
+}
