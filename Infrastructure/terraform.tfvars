@@ -19,3 +19,10 @@ public-subnets-CIDR-AZ = {
 hot-storage-name        = "hot-storage"
 cold-storage-name       = "cold-storage"
 execution-registry-name = "execution-registry"
+
+
+ecr-repo-names = {
+  "telemetry-code-repo-name"  = "telemetry-service-repo"
+  "processing-code-repo-name" = "processing-service-repo"
+  "alert-code-repo-name"      = "alert-service-repo"
+}

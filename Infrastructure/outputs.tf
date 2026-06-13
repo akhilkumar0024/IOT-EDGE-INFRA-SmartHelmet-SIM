@@ -116,3 +116,12 @@ output "compute-iam-roles" {
     alert_role_arn      = module.compute.alert-infra-role-arn
   }
 }
+
+output "ecr-repo-urls" {
+  description = "URLS of ECR Repos"
+  value = {
+    telemetry-service-repo-url  = module.ecr.telemetry-code-repo-url
+    processing-service-repo-url = module.ecr.processing-code-repo-url
+    alert-service-repo-url      = module.ecr.alert-code-repo-url
+  }
+}

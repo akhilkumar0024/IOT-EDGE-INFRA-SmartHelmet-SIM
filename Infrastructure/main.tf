@@ -34,3 +34,11 @@ module "compute" {
   cold-storage-arn       = module.database.cold-storage-arn
   execution-registry-arn = module.database.execution-registry-arn
 }
+
+module "ecr" {
+  source = "./modules/ecr"
+
+  telemetry-code-repo-name  = var.ecr-repo-names["telemetry-code-repo-name"]
+  processing-code-repo-name = var.ecr-repo-names["processing-code-repo-name"]
+  alert-code-repo-name      = var.ecr-repo-names["alert-code-repo-name"]
+}

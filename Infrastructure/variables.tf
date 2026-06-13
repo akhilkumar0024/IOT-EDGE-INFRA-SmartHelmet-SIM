@@ -55,3 +55,13 @@ variable "execution-registry-name" {
   type        = string
   default     = "smart-helmet-execution-registry"
 }
+
+variable "ecr-repo-names" {
+  description = "Name for ECR repos"
+  type        = map(string)
+  default = {
+    "telemetry-code-repo-name"  = "telemetry-service-repo"
+    "processing-code-repo-name" = "processing-service-repo"
+    "alert-code-repo-name"      = "alert-service-repo"
+  }
+}
