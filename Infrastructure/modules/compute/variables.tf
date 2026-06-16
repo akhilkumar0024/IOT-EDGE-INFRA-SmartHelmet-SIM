@@ -59,3 +59,13 @@ variable "ecs-security-group-id" {
   description = "id of the SG"
   type        = string
 }
+
+variable "telemetry-queue-url" { type = string }
+variable "control-queue-url" { type = string }
+variable "crash-queue-url" { type = string }
+variable "alert-queue-url" { type = string }
+variable "LWT-queue-url" { type = string }
+variable "override-queue-url" { type = string }
+variable "hot-storage-name" { type = string }
+variable "cold-storage-name" { type = string }
+variable "execution-registry-name" { type = string }
