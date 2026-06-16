@@ -33,3 +33,29 @@ variable "cold-storage-arn" {
 variable "execution-registry-arn" {
   type = string
 }
+
+
+variable "telemetry-code-repo-url" {
+  description = "the ECR URL for the telemetry infra image"
+  type        = string
+}
+
+variable "processing-code-repo-url" {
+  description = "the ECR URL for the processing infra image"
+  type        = string
+}
+
+variable "alert-code-repo-url" {
+  description = "the ECR URL for the alert infra image"
+  type        = string
+}
+
+variable "public-subnet-ids" {
+  description = "ids of the public subnets"
+  type        = list(string)
+}
+
+variable "ecs-security-group-id" {
+  description = "id of the SG"
+  type        = string
+}

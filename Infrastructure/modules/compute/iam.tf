@@ -217,3 +217,28 @@ resource "aws_iam_role_policy_attachment" "Alert-Infra-Role-Policy-Attachment" {
   policy_arn = aws_iam_policy.Alert-Infra-Role-Policy.arn
 }
 
+#4.ECS Task role to allow pulling image from the ECR container
+#4.The Execution Role (Used by ECS to pull images and write logs)
+resource "aws_iam_role" "ECS-Execution-Role" {
+  name = "ECS-Execution-Role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+#4.Attach the AWS Managed Policy for ECS Execution
+resource "aws_iam_role_policy_attachment" "ECS-Execution-Role-Policy-Attachment" {
+  role       = aws_iam_role.ECS-Execution-Role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+

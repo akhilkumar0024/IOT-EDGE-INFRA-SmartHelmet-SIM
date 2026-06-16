@@ -22,17 +22,21 @@ module "messaging" {
 }
 
 module "compute" {
-  source = "./modules/compute"
-
-  telemetry-queue-arn    = module.messaging.telemetry-queue-arn
-  control-queue-arn      = module.messaging.control-queue-arn
-  crash-queue-arn        = module.messaging.crash-queue-arn
-  alert-queue-arn        = module.messaging.alert-queue-arn
-  LWT-queue-arn          = module.messaging.lwt-queue-arn
-  override-queue-arn     = module.messaging.override-queue-arn
-  hot-storage-arn        = module.database.hot-storage-arn
-  cold-storage-arn       = module.database.cold-storage-arn
-  execution-registry-arn = module.database.execution-registry-arn
+  source                   = "./modules/compute"
+  public-subnet-ids        = module.networking.public-subnet-ids
+  telemetry-queue-arn      = module.messaging.telemetry-queue-arn
+  control-queue-arn        = module.messaging.control-queue-arn
+  crash-queue-arn          = module.messaging.crash-queue-arn
+  alert-queue-arn          = module.messaging.alert-queue-arn
+  LWT-queue-arn            = module.messaging.lwt-queue-arn
+  override-queue-arn       = module.messaging.override-queue-arn
+  hot-storage-arn          = module.database.hot-storage-arn
+  cold-storage-arn         = module.database.cold-storage-arn
+  execution-registry-arn   = module.database.execution-registry-arn
+  telemetry-code-repo-url  = module.ecr.telemetry-code-repo-url
+  processing-code-repo-url = module.ecr.processing-code-repo-url
+  alert-code-repo-url      = module.ecr.alert-code-repo-url
+  ecs-security-group-id    = module.ecs-security-group.aws-sg-ecs-infra-id
 }
 
 module "ecr" {
