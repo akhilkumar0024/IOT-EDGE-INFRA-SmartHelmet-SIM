@@ -133,7 +133,7 @@ resource "aws_iam_policy" "Processing-Infra-Role-Policy" {
           "dynamodb:PutItem",
           "dynamodb:UpdateItem"
         ]
-        Resource = var.hot-storage-arn
+        Resource = var.cold-storage-arn
       },
       {
         Sid    = "AllowReadHotDynamoDB"
@@ -141,7 +141,7 @@ resource "aws_iam_policy" "Processing-Infra-Role-Policy" {
         Action = [
           "dynamodb:GetItem"
         ]
-        Resource = var.cold-storage-arn
+        Resource = var.hot-storage-arn
       }
     ]
   })
