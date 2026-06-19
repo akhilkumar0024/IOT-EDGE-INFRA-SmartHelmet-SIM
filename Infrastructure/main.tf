@@ -55,3 +55,7 @@ module "ecr" {
   processing-code-repo-name = var.ecr-repo-names["processing-code-repo-name"]
   alert-code-repo-name      = var.ecr-repo-names["alert-code-repo-name"]
 }
+
+module "parameter-store" {
+  source = "./modules/parameter-store"
+}
