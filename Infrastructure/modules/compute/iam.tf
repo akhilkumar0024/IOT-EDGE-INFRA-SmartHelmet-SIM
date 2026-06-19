@@ -60,6 +60,16 @@ resource "aws_iam_policy" "Telemetry-Infra-Role-Policy" {
           "dynamodb:UpdateItem"
         ]
         Resource = var.hot-storage-arn
+      },
+      {
+        Sid    = "AllowReadParameterStore"
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParameter",
+          "ssm:GetParametersByPath",
+          "ssm:GetParameters"
+        ]
+        Resource = "arn:aws:ssm:*:*:parameter/smart-helmet/config/*"
       }
     ]
   })
@@ -142,6 +152,16 @@ resource "aws_iam_policy" "Processing-Infra-Role-Policy" {
           "dynamodb:GetItem"
         ]
         Resource = var.hot-storage-arn
+      },
+      {
+        Sid    = "AllowReadParameterStore"
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParameter",
+          "ssm:GetParametersByPath",
+          "ssm:GetParameters"
+        ]
+        Resource = "arn:aws:ssm:*:*:parameter/smart-helmet/config/*"
       }
     ]
   })
@@ -206,6 +226,16 @@ resource "aws_iam_policy" "Alert-Infra-Role-Policy" {
           "dynamodb:UpdateItem"
         ]
         Resource = var.execution-registry-arn
+      },
+      {
+        Sid    = "AllowReadParameterStore"
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParameter",
+          "ssm:GetParametersByPath",
+          "ssm:GetParameters"
+        ]
+        Resource = "arn:aws:ssm:*:*:parameter/smart-helmet/config/*"
       }
     ]
   })
