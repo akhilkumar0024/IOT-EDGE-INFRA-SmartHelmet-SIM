@@ -59,3 +59,13 @@ module "ecr" {
 module "parameter-store" {
   source = "./modules/parameter-store"
 }
+
+module "iot-core" {
+  source              = "./modules/iot"
+  override-queue-arn  = module.messaging.override-queue-arn
+  override-queue-url  = module.messaging.override-queue-url
+  telemetry-queue-arn = module.messaging.telemetry-queue-arn
+  telemetry-queue-url = module.messaging.telemetry-queue-url
+  LWT-queue-arn       = module.messaging.lwt-queue-arn
+  LWT-queue-url       = module.messaging.lwt-queue-url
+}

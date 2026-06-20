@@ -125,3 +125,8 @@ output "ecr-repo-urls" {
     alert-service-repo-url      = module.ecr.alert-code-repo-url
   }
 }
+
+output "iot_endpoint_url" {
+  description = "The endpoint URL the Python simulator will connect to"
+  value       = module.iot-core.iot_endpoint_url
+}
