@@ -7,3 +7,8 @@ resource "aws_ecs_cluster" "smart-helmet-cluster" {
   }
 }
 
+#2. CloudWatch Log Group for ECS
+resource "aws_cloudwatch_log_group" "ecs_log_group" {
+  name              = "/ecs/smart-helmet-cluster"
+  retention_in_days = 14
+}

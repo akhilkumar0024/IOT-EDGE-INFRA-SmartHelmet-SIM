@@ -21,7 +21,15 @@ resource "aws_ecs_task_definition" "telemetry-task" {
         { name = "CONTROL_QUEUE_URL", value = var.control-queue-url },
         { name = "CRASH_QUEUE_URL", value = var.crash-queue-url },
         { name = "HOT_STORAGE_NAME", value = var.hot-storage-name }
-      ]
+      ],
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = "/ecs/smart-helmet-cluster"
+          "awslogs-region"        = "ap-south-1"
+          "awslogs-stream-prefix" = "telemetry"
+        }
+      }
     }
   ])
 }
@@ -51,7 +59,15 @@ resource "aws_ecs_task_definition" "processing-task" {
         { name = "ALERT_QUEUE_URL", value = var.alert-queue-url },
         { name = "HOT_STORAGE_NAME", value = var.hot-storage-name },
         { name = "COLD_STORAGE_NAME", value = var.cold-storage-name }
-      ]
+      ],
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = "/ecs/smart-helmet-cluster"
+          "awslogs-region"        = "ap-south-1"
+          "awslogs-stream-prefix" = "processing"
+        }
+      }
     }
   ])
 }
@@ -77,8 +93,17 @@ resource "aws_ecs_task_definition" "alerts-task" {
       environment = [
         { name = "ALERT_QUEUE_URL", value = var.alert-queue-url },
         { name = "OVERRIDE_QUEUE_URL", value = var.override-queue-url },
-        { name = "EXECUTION_REGISTRY_NAME", value = var.execution-registry-name }
-      ]
+        { name = "EXECUTION_REGISTRY_NAME", value = var.execution-registry-name },
+        { name = "STEP_FUNCTION_ARN", value = var.step_function_arn }
+      ],
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = "/ecs/smart-helmet-cluster"
+          "awslogs-region"        = "ap-south-1"
+          "awslogs-stream-prefix" = "alerts"
+        }
+      }
     }
   ])
 }

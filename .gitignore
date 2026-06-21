@@ -25,3 +25,14 @@ override.tf.json
 .terraformrc
 terraform.rc
 tfplan
+
+.venv
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+
+# --- IoT Simulator Certificates ---
+*.pem
+*.crt
+*.key
