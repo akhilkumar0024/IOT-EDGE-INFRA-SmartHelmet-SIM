@@ -236,6 +236,21 @@ resource "aws_iam_policy" "Alert-Infra-Role-Policy" {
           "ssm:GetParameters"
         ]
         Resource = "arn:aws:ssm:*:*:parameter/smart-helmet/config/*"
+      },
+      {
+        Sid    = "TriggerStepFunctions"
+        Effect = "Allow"
+        Action = [
+          "states:StartExecution",
+          "states:StopExecution"
+        ]
+        Resource = var.step_function_arn
+      },
+      {
+        Sid      = "PublishToHelmet"
+        Effect   = "Allow"
+        Action   = "iot:Publish"
+        Resource = "arn:aws:iot:*:*:topic/helmet/*/alert/status"
       }
     ]
   })

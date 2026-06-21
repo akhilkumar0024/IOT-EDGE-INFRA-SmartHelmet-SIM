@@ -46,6 +46,7 @@ module "compute" {
   processing-code-repo-url = module.ecr.processing-code-repo-url
   alert-code-repo-url      = module.ecr.alert-code-repo-url
   ecs-security-group-id    = module.ecs-security-group.aws-sg-ecs-infra-id
+  step_function_arn        = module.step-function.state_machine_arn
 }
 
 module "ecr" {
@@ -68,4 +69,11 @@ module "iot-core" {
   telemetry-queue-url = module.messaging.telemetry-queue-url
   LWT-queue-arn       = module.messaging.lwt-queue-arn
   LWT-queue-url       = module.messaging.lwt-queue-url
+}
+
+module "step-function" {
+  source                 = "./modules/step-functions"
+  cold-storage-arn       = module.database.cold-storage-arn
+  execution-registry-arn = module.database.execution-registry-arn
+  cold-storage-name      = var.cold-storage-name
 }

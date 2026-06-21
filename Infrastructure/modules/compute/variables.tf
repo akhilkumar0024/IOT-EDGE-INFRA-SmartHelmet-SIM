@@ -69,3 +69,8 @@ variable "override-queue-url" { type = string }
 variable "hot-storage-name" { type = string }
 variable "cold-storage-name" { type = string }
 variable "execution-registry-name" { type = string }
+
+variable "step_function_arn" {
+  description = "The ARN of the Alert Step Function"
+  type        = string
+}
