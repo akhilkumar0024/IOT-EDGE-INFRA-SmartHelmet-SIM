@@ -18,7 +18,6 @@ resource "aws_ecs_task_definition" "telemetry-task" {
       essential = true
       environment = [
         { name = "TELEMETRY_QUEUE_URL", value = var.telemetry-queue-url },
-        { name = "CONTROL_QUEUE_URL", value = var.control-queue-url },
         { name = "CRASH_QUEUE_URL", value = var.crash-queue-url },
         { name = "HOT_STORAGE_NAME", value = var.hot-storage-name }
       ],

@@ -48,7 +48,6 @@ resource "aws_iam_policy" "Telemetry-Infra-Role-Policy" {
           "sqs:SendMessage"
         ]
         Resource = [
-          var.control-queue-arn,
           var.crash-queue-arn,
         ]
       },

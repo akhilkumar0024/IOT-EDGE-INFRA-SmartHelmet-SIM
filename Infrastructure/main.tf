@@ -23,6 +23,12 @@ module "messaging" {
 
 module "compute" {
   source                   = "./modules/compute"
+  telemetry-queue-name     = module.messaging.telemetry-queue-name
+  alert-queue-name         = module.messaging.alert-queue-name
+  override-queue-name      = module.messaging.override-queue-name
+  LWT-queue-name           = module.messaging.lwt-queue-name
+  control-queue-name       = module.messaging.control-queue-name
+  crash-queue-name         = module.messaging.crash-queue-name
   public-subnet-ids        = module.networking.public-subnet-ids
   telemetry-queue-arn      = module.messaging.telemetry-queue-arn
   control-queue-arn        = module.messaging.control-queue-arn
@@ -69,6 +75,8 @@ module "iot-core" {
   telemetry-queue-url = module.messaging.telemetry-queue-url
   LWT-queue-arn       = module.messaging.lwt-queue-arn
   LWT-queue-url       = module.messaging.lwt-queue-url
+  control-queue-arn   = module.messaging.control-queue-arn
+  control-queue-url   = module.messaging.control-queue-url
 }
 
 module "step-function" {

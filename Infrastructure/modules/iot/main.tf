@@ -92,6 +92,7 @@ resource "aws_iam_policy" "iot-sqs-access-policy" {
           var.telemetry-queue-arn,
           var.override-queue-arn,
           var.LWT-queue-arn,
+          var.control-queue-arn,
         ]
       }
     ]
@@ -145,6 +146,21 @@ resource "aws_iot_topic_rule" "iot-lwt-rule" {
 
   sqs {
     queue_url  = var.LWT-queue-url
+    role_arn   = aws_iam_role.iot-sqs-access-role.arn
+    use_base64 = false
+  }
+}
+
+#Rule 4 :
+resource "aws_iot_topic_rule" "iot-control-rule" {
+  name        = "iot_control_rule"
+  description = "Routes control MQTT messages (graceful shutdown, low battery) to the Control Queue"
+  enabled     = true
+  sql         = "SELECT * FROM 'helmet/+/control'"
+  sql_version = "2016-03-23"
+
+  sqs {
+    queue_url  = var.control-queue-url
     role_arn   = aws_iam_role.iot-sqs-access-role.arn
     use_base64 = false
   }

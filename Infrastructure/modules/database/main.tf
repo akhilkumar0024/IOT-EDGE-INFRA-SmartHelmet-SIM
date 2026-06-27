@@ -3,8 +3,8 @@ resource "aws_dynamodb_table" "smart-helmet-hot-storage" {
   billing_mode   = "PROVISIONED"
   hash_key       = "helmetId"
   range_key      = "timestamp"
-  read_capacity  = 6
-  write_capacity = 6
+  read_capacity  = 5
+  write_capacity = 5
 
   attribute {
     name = "helmetId"
@@ -31,8 +31,8 @@ resource "aws_dynamodb_table" "smart-helmet-cold-storage" {
   billing_mode   = "PROVISIONED"
   hash_key       = "helmetId"
   range_key      = "timestamp"
-  read_capacity  = 4
-  write_capacity = 4
+  read_capacity  = 5
+  write_capacity = 5
 
   attribute {
     name = "helmetId"

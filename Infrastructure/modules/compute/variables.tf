@@ -74,3 +74,33 @@ variable "step_function_arn" {
   description = "The ARN of the Alert Step Function"
   type        = string
 }
+
+variable "telemetry-queue-name" {
+  description = "name of the telemetry queue"
+  type        = string
+}
+
+variable "alert-queue-name" {
+  description = "name of the alert queue"
+  type        = string
+}
+
+variable "override-queue-name" {
+  description = "name of the override queue"
+  type        = string
+}
+
+variable "LWT-queue-name" {
+  description = "name of the LWT queue"
+  type        = string
+}
+
+variable "control-queue-name" {
+  description = "name of the control queue"
+  type        = string
+}
+
+variable "crash-queue-name" {
+  description = "name of the crash queue"
+  type        = string
+}
