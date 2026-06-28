@@ -3,6 +3,9 @@ import json
 import time
 import logging
 import boto3
+import signal
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from decimal import Decimal
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -29,9 +32,11 @@ def process_messages():
         return
 
     table = dynamodb.Table(HOT_STORAGE_NAME)
-
-    while True:
+    
+    global last_poll_time
+    while not is_shutting_down:
         try:
+            last_poll_time = time.time()
             response = sqs.receive_message(
                 QueueUrl=TELEMETRY_QUEUE_URL,
                 MaxNumberOfMessages=10,
@@ -86,7 +91,55 @@ def process_messages():
         except Exception as e:
             logging.error(f"Error polling SQS: {str(e)}")
             time.sleep(5)
+            
+    logging.info("Graceful shutdown complete. Exiting.")
+
+# --- Graceful Shutdown ---
+is_shutting_down = False
+
+def sigterm_handler(signum, frame):
+    global is_shutting_down
+    logging.info("Received SIGTERM. Initiating graceful shutdown...")
+    is_shutting_down = True
+
+signal.signal(signal.SIGTERM, sigterm_handler)
+signal.signal(signal.SIGINT, sigterm_handler)
+
+# --- Health Check Server ---
+last_poll_time = time.time()
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/health':
+            # Check for zombie task (if the loop hasn't run in 5 minutes)
+            if time.time() - last_poll_time > 300:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(b"ZOMBIE TASK")
+                return
+
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b"HEALTHY")
+        else:
+            self.send_response(404)
+            self.end_headers()
+            
+    # Suppress HTTP log messages to avoid log spam
+    def log_message(self, format, *args):
+        pass
+
+def start_health_server():
+    server = HTTPServer(('0.0.0.0', 8080), HealthCheckHandler)
+    logging.info("Health check server listening on port 8080")
+    server.serve_forever()
 
 if __name__ == '__main__':
     logging.info("Starting Telemetry Processor Service...")
+    
+    # Start the health server in a background thread
+    health_thread = threading.Thread(target=start_health_server, daemon=True)
+    health_thread.start()
+    
     process_messages()

@@ -3,6 +3,9 @@ import json
 import time
 import logging
 import boto3
+import signal
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -67,10 +70,22 @@ def handle_alert(msg):
         wait_seconds = get_ssm_parameter("/smart-helmet/config/retrospective_alert_window_seconds", 300)
         message = f"Retrospective crash detected. Countdown: {wait_seconds}s"
 
-    # 1. Publish START COUNTDOWN to Helmet
-    publish_to_helmet(helmet_id, "START_COUNTDOWN", message)
+    table = dynamodb.Table(EXECUTION_REGISTRY_NAME)
 
-    # 2. Start Step Function Execution
+    # 1. Race Condition Fix: Check for PendingOverride flag BEFORE starting execution
+    try:
+        response = table.get_item(Key={'helmetId': helmet_id})
+        item = response.get('Item')
+        if item and item.get('ExecutionArn') == 'PENDING_OVERRIDE':
+            logging.info(f"Alert ABORTED. Rider override arrived before alert processing finished for {helmet_id}")
+            # Delete the pending flag and return early
+            table.delete_item(Key={'helmetId': helmet_id})
+            publish_to_helmet(helmet_id, "DISMISS", "Alert automatically cancelled.")
+            return
+    except Exception as e:
+        logging.error(f"Error checking pending override: {str(e)}")
+
+    # 2. Race Condition Fix: Change Execution Order - Backend first, UI last!
     try:
         execution_input = {
             "helmet_id": helmet_id,
@@ -83,8 +98,7 @@ def handle_alert(msg):
         )
         execution_arn = response['executionArn']
         
-        # 3. Write ARN to Execution Registry DynamoDB Table
-        table = dynamodb.Table(EXECUTION_REGISTRY_NAME)
+        # Write ARN to Execution Registry DynamoDB Table
         table.put_item(
             Item={
                 'helmetId': helmet_id,
@@ -93,6 +107,10 @@ def handle_alert(msg):
             }
         )
         logging.info(f"Started Step Function {execution_arn} for {helmet_id}")
+
+        # Publish START COUNTDOWN to Helmet LAST.
+        # This guarantees the backend is ready to receive an override tap.
+        publish_to_helmet(helmet_id, "START_COUNTDOWN", message)
 
     except Exception as e:
         logging.error(f"Failed to start step function: {str(e)}")
@@ -129,8 +147,18 @@ def handle_override(msg):
 
             # 4. Remove from registry
             table.delete_item(Key={'helmetId': helmet_id})
+        elif item and item.get('ExecutionArn') == 'PENDING_OVERRIDE':
+            logging.info(f"Pending override flag already exists for {helmet_id}")
         else:
-            logging.warning(f"No active execution found for {helmet_id} to override.")
+            # Race Condition Fix: Write PendingOverride flag
+            logging.warning(f"No active execution found for {helmet_id}. Writing PENDING_OVERRIDE flag.")
+            table.put_item(
+                Item={
+                    'helmetId': helmet_id,
+                    'ExecutionArn': 'PENDING_OVERRIDE',
+                    'TimeToExist': int(time.time()) + 60 # 60 second TTL
+                }
+            )
 
     except Exception as e:
         logging.error(f"Failed to process override for {helmet_id}: {str(e)}")
@@ -140,17 +168,20 @@ def process_messages():
         logging.error("Missing required environment variables.")
         return
 
-    while True:
+    global last_poll_time
+    while not is_shutting_down:
         try:
+            last_poll_time = time.time()
+            
             # Poll Alert Queue
-            alert_res = sqs.receive_message(QueueUrl=ALERT_QUEUE_URL, MaxNumberOfMessages=5, WaitTimeSeconds=5)
+            alert_res = sqs.receive_message(QueueUrl=ALERT_QUEUE_URL, MaxNumberOfMessages=5, WaitTimeSeconds=2)
             for msg in alert_res.get('Messages', []):
                 logging.info(f"Received ALERT message: {msg['Body']}")
                 handle_alert(msg)
                 sqs.delete_message(QueueUrl=ALERT_QUEUE_URL, ReceiptHandle=msg['ReceiptHandle'])
 
             # Poll Override Queue
-            override_res = sqs.receive_message(QueueUrl=OVERRIDE_QUEUE_URL, MaxNumberOfMessages=5, WaitTimeSeconds=5)
+            override_res = sqs.receive_message(QueueUrl=OVERRIDE_QUEUE_URL, MaxNumberOfMessages=5, WaitTimeSeconds=2)
             for msg in override_res.get('Messages', []):
                 logging.info(f"Received OVERRIDE message: {msg['Body']}")
                 handle_override(msg)
@@ -159,7 +190,51 @@ def process_messages():
         except Exception as e:
             logging.error(f"Error in polling loop: {str(e)}")
             time.sleep(5)
+            
+    logging.info("Graceful shutdown complete. Exiting.")
+
+# --- Graceful Shutdown ---
+is_shutting_down = False
+
+def sigterm_handler(signum, frame):
+    global is_shutting_down
+    logging.info("Received SIGTERM. Initiating graceful shutdown...")
+    is_shutting_down = True
+
+signal.signal(signal.SIGTERM, sigterm_handler)
+signal.signal(signal.SIGINT, sigterm_handler)
+
+# --- Health Check Server ---
+last_poll_time = time.time()
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/health':
+            # Check for zombie task
+            if time.time() - last_poll_time > 300:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(b"ZOMBIE TASK")
+                return
+
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b"HEALTHY")
+        else:
+            self.send_response(404)
+            self.end_headers()
+            
+    def log_message(self, format, *args):
+        pass
+
+def start_health_server():
+    server = HTTPServer(('0.0.0.0', 8080), HealthCheckHandler)
+    logging.info("Health check server listening on port 8080")
+    server.serve_forever()
 
 if __name__ == '__main__':
     logging.info("Starting Alert Handler Service...")
+    health_thread = threading.Thread(target=start_health_server, daemon=True)
+    health_thread.start()
     process_messages()

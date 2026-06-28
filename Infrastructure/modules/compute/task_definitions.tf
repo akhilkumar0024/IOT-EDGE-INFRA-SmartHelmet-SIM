@@ -21,6 +21,19 @@ resource "aws_ecs_task_definition" "telemetry-task" {
         { name = "CRASH_QUEUE_URL", value = var.crash-queue-url },
         { name = "HOT_STORAGE_NAME", value = var.hot-storage-name }
       ],
+      portMappings = [
+        {
+          containerPort = 8080
+          protocol      = "tcp"
+        }
+      ],
+      healthCheck = {
+        command     = ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 60
+      },
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -59,6 +72,19 @@ resource "aws_ecs_task_definition" "processing-task" {
         { name = "HOT_STORAGE_NAME", value = var.hot-storage-name },
         { name = "COLD_STORAGE_NAME", value = var.cold-storage-name }
       ],
+      portMappings = [
+        {
+          containerPort = 8080
+          protocol      = "tcp"
+        }
+      ],
+      healthCheck = {
+        command     = ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 60
+      },
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -95,6 +121,19 @@ resource "aws_ecs_task_definition" "alerts-task" {
         { name = "EXECUTION_REGISTRY_NAME", value = var.execution-registry-name },
         { name = "STEP_FUNCTION_ARN", value = var.step_function_arn }
       ],
+      portMappings = [
+        {
+          containerPort = 8080
+          protocol      = "tcp"
+        }
+      ],
+      healthCheck = {
+        command     = ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 60
+      },
       logConfiguration = {
         logDriver = "awslogs"
         options = {
