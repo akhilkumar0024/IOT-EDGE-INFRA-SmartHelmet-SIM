@@ -65,3 +65,9 @@ variable "ecr-repo-names" {
     "alert-code-repo-name"      = "alert-service-repo"
   }
 }
+
+variable "sns-email-address" {
+  description = "Email Address to send alerts to"
+  type        = string
+  default     = "akhilkumar0024.devops@gmail.com"
+}

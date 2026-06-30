@@ -26,3 +26,5 @@ ecr-repo-names = {
   "processing-code-repo-name" = "processing-service-repo"
   "alert-code-repo-name"      = "alert-service-repo"
 }
+
+sns-email-address = "akhilkumar0024.devops@gmail.com"

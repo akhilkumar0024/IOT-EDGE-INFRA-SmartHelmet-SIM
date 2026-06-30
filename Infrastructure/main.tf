@@ -85,3 +85,15 @@ module "step-function" {
   execution-registry-arn = module.database.execution-registry-arn
   cold-storage-name      = var.cold-storage-name
 }
+
+module "monitoring" {
+  source = "./modules/monitoring"
+
+  sns-email-address  = var.sns-email-address
+  telemetry-dlq-name = module.messaging.telemetry-dlq-name
+  control-dlq-name   = module.messaging.control-dlq-name
+  lwt-dlq-name       = module.messaging.lwt-dlq-name
+  crash-dlq-name     = module.messaging.crash-dlq-name
+  alert-dlq-name     = module.messaging.alert-dlq-name
+  override-dlq-name  = module.messaging.override-dlq-name
+}
