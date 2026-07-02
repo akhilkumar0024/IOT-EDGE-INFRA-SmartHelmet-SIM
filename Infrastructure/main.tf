@@ -87,13 +87,25 @@ module "step-function" {
 }
 
 module "monitoring" {
-  source = "./modules/monitoring"
+  source                           = "./modules/monitoring"
+  step-function-arn                = module.step-function.state_machine_arn
+  dynamodb-hot-storage-name        = var.hot-storage-name
+  dynamoDB-cold-storage-name       = var.cold-storage-name
+  dynamoDB-execution-registry-name = var.execution-registry-name
+  sns-email-address                = var.sns-email-address
+  telemetry-dlq-name               = module.messaging.telemetry-dlq-name
+  control-dlq-name                 = module.messaging.control-dlq-name
+  lwt-dlq-name                     = module.messaging.lwt-dlq-name
+  crash-dlq-name                   = module.messaging.crash-dlq-name
+  alert-dlq-name                   = module.messaging.alert-dlq-name
+  override-dlq-name                = module.messaging.override-dlq-name
 
-  sns-email-address  = var.sns-email-address
-  telemetry-dlq-name = module.messaging.telemetry-dlq-name
-  control-dlq-name   = module.messaging.control-dlq-name
-  lwt-dlq-name       = module.messaging.lwt-dlq-name
-  crash-dlq-name     = module.messaging.crash-dlq-name
-  alert-dlq-name     = module.messaging.alert-dlq-name
-  override-dlq-name  = module.messaging.override-dlq-name
+  queue_names = [
+    module.messaging.telemetry-queue-name,
+    module.messaging.control-queue-name,
+    module.messaging.lwt-queue-name,
+    module.messaging.crash-queue-name,
+    module.messaging.alert-queue-name,
+    module.messaging.override-queue-name
+  ]
 }

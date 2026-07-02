@@ -27,3 +27,28 @@ variable "alert-dlq-name" {
 variable "override-dlq-name" {
   type = string
 }
+
+variable "dynamodb-hot-storage-name" {
+  type        = string
+  description = "DynamoDB Hot Storage name"
+}
+
+variable "dynamoDB-cold-storage-name" {
+  type        = string
+  description = "DynamoDB Cold Storage name"
+}
+
+variable "dynamoDB-execution-registry-name" {
+  type        = string
+  description = "DynamoDB Execution Registry name"
+}
+
+variable "step-function-arn" {
+  type        = string
+  description = "Step Function ARN"
+}
+
+variable "queue_names" {
+  type        = set(string)
+  description = "Set of primary SQS queue names to monitor message age"
+}
