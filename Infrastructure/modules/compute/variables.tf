@@ -104,3 +104,8 @@ variable "crash-queue-name" {
   description = "name of the crash queue"
   type        = string
 }
+
+variable "ecs-log-group-name" {
+  description = "CloudWatch Log Group name for ECS Cluster"
+  type        = string
+}

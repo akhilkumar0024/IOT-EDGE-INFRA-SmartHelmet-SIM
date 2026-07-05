@@ -52,3 +52,8 @@ variable "queue_names" {
   type        = set(string)
   description = "Set of primary SQS queue names to monitor message age"
 }
+
+variable "ecs-log-group-name" {
+  type        = string
+  description = "CloudWatch Log Group name for ECS Cluster"
+}

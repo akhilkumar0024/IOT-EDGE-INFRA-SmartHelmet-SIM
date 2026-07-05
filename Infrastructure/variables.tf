@@ -71,3 +71,9 @@ variable "sns-email-address" {
   type        = string
   default     = "akhilkumar0024.devops@gmail.com"
 }
+
+variable "ecs-log-group-name" {
+  description = "CloudWatch Log Group name for ECS Cluster"
+  type        = string
+  default     = "/ecs/smart-helmet-cluster"
+}

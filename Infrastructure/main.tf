@@ -53,6 +53,7 @@ module "compute" {
   alert-code-repo-url      = module.ecr.alert-code-repo-url
   ecs-security-group-id    = module.ecs-security-group.aws-sg-ecs-infra-id
   step_function_arn        = module.step-function.state_machine_arn
+  ecs-log-group-name       = var.ecs-log-group-name
 }
 
 module "ecr" {
@@ -108,4 +109,6 @@ module "monitoring" {
     module.messaging.alert-queue-name,
     module.messaging.override-queue-name
   ]
+
+  ecs-log-group-name = var.ecs-log-group-name
 }

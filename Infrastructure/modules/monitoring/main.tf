@@ -256,7 +256,7 @@ resource "aws_cloudwatch_metric_alarm" "dynamoDB-execution-registry-alarm" {
 
 #10 ECS Cluster Log Group 
 resource "aws_cloudwatch_log_group" "ecs_cluster_logs" {
-  name              = "/ecs/smart-helmet-cluster"
+  name              = var.ecs-log-group-name
   retention_in_days = 14
 }
 

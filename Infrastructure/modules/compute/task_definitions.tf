@@ -37,7 +37,7 @@ resource "aws_ecs_task_definition" "telemetry-task" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = "/ecs/smart-helmet-cluster"
+          "awslogs-group"         = var.ecs-log-group-name
           "awslogs-region"        = "ap-south-1"
           "awslogs-stream-prefix" = "telemetry"
         }
@@ -88,7 +88,7 @@ resource "aws_ecs_task_definition" "processing-task" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = "/ecs/smart-helmet-cluster"
+          "awslogs-group"         = var.ecs-log-group-name
           "awslogs-region"        = "ap-south-1"
           "awslogs-stream-prefix" = "processing"
         }
@@ -137,7 +137,7 @@ resource "aws_ecs_task_definition" "alerts-task" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = "/ecs/smart-helmet-cluster"
+          "awslogs-group"         = var.ecs-log-group-name
           "awslogs-region"        = "ap-south-1"
           "awslogs-stream-prefix" = "alerts"
         }
