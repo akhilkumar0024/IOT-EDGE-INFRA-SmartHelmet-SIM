@@ -13,7 +13,8 @@ module "database" {
   source                  = "./modules/database"
   hot-storage-name        = var.hot-storage-name
   cold-storage-name       = var.cold-storage-name
-  execution-registry-name = var.execution-registry-name
+  execution-registry-name     = var.execution-registry-name
+  device-status-db-table-name = var.device-status-db-table-name
 }
 
 module "messaging" {
@@ -52,8 +53,10 @@ module "compute" {
   processing-code-repo-url = module.ecr.processing-code-repo-url
   alert-code-repo-url      = module.ecr.alert-code-repo-url
   ecs-security-group-id    = module.ecs-security-group.aws-sg-ecs-infra-id
-  step_function_arn        = module.step-function.state_machine_arn
-  ecs-log-group-name       = var.ecs-log-group-name
+  step_function_arn           = module.step-function.state_machine_arn
+  ecs-log-group-name          = var.ecs-log-group-name
+  device-status-db-table-name = module.database.device-status-db-table-name
+  device-status-db-table-arn  = module.database.device-status-db-table-arn
 }
 
 module "ecr" {

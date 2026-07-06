@@ -148,9 +148,22 @@ resource "aws_iam_policy" "Processing-Infra-Role-Policy" {
         Sid    = "AllowReadHotDynamoDB"
         Effect = "Allow"
         Action = [
-          "dynamodb:GetItem"
+          "dynamodb:GetItem",
+          "dynamodb:Query",
+          "dynamodb:Scan"
         ]
         Resource = var.hot-storage-arn
+      },
+      {
+        Sid    = "AllowReadWriteDeviceStatusDB"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem"
+        ]
+        Resource = var.device-status-db-table-arn
       },
       {
         Sid    = "AllowReadParameterStore"

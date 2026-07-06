@@ -15,16 +15,27 @@ ALERT_QUEUE_URL = os.getenv('ALERT_QUEUE_URL')
 CONTROL_QUEUE_URL = os.getenv('CONTROL_QUEUE_URL')
 LWT_QUEUE_URL = os.getenv('LWT_QUEUE_URL')
 HOT_STORAGE_NAME = os.getenv('HOT_STORAGE_NAME')
+DEVICE_STATUS_DB_TABLE_NAME = os.getenv('DEVICE_STATUS_DB_TABLE_NAME')
 
 sqs = boto3.client('sqs', region_name='ap-south-1')
 dynamodb = boto3.resource('dynamodb', region_name='ap-south-1')
+ssm = boto3.client('ssm', region_name='ap-south-1')
+
+def get_ssm_parameter(name, default_value):
+    try:
+        response = ssm.get_parameter(Name=name)
+        return int(response['Parameter']['Value'])
+    except Exception as e:
+        logging.warning(f"Failed to fetch {name} from SSM, using default {default_value}: {str(e)}")
+        return default_value
 
 def process_messages():
-    if not CRASH_QUEUE_URL or not ALERT_QUEUE_URL or not HOT_STORAGE_NAME:
+    if not CRASH_QUEUE_URL or not ALERT_QUEUE_URL or not HOT_STORAGE_NAME or not DEVICE_STATUS_DB_TABLE_NAME:
         logging.error("Missing required environment variables.")
         return
 
-    table = dynamodb.Table(HOT_STORAGE_NAME)
+    telemetry_table = dynamodb.Table(HOT_STORAGE_NAME)
+    status_table = dynamodb.Table(DEVICE_STATUS_DB_TABLE_NAME)
     
     global last_poll_time
     while not is_shutting_down:
@@ -90,14 +101,14 @@ def process_messages():
                     try:
                         body = json.loads(msg['Body'])
                         helmet_id = body.get('helmet_id')
-                        # If we get a graceful shutdown message, write it to DynamoDB with a 5-minute TTL
+                        # If we get a graceful shutdown message, write it to DynamoDB status table
                         if helmet_id:
                             logging.info(f"Received Graceful Shutdown for {helmet_id}")
-                            table.put_item(Item={
+                            status_table.put_item(Item={
                                 'helmetId': helmet_id,
-                                'timestamp': Decimal(str(time.time())),
                                 'status': 'GRACEFUL_SHUTDOWN',
-                                'TimeToExist': int(time.time()) + 300 # 5 minutes TTL
+                                'shutdown_timestamp': Decimal(str(time.time())),
+                                'TimeToExist': int(time.time()) + 900 # 15 minutes TTL
                             })
                         sqs.delete_message(QueueUrl=CONTROL_QUEUE_URL, ReceiptHandle=msg['ReceiptHandle'])
                     except Exception as e:
@@ -118,14 +129,19 @@ def process_messages():
                         
                         logging.warning(f"Received LWT Disconnect for {helmet_id}")
                         
-                        # Wait a few seconds to let any pending graceful shutdown messages clear the queue
-                        time.sleep(3)
-                        
-                        # Query DynamoDB to check if it was a graceful shutdown
-                        db_response = table.get_item(Key={'helmetId': helmet_id, 'timestamp': Decimal(str(timestamp))})
+                        # Retrieve status from the registry table using helmetId
+                        db_response = status_table.get_item(Key={'helmetId': helmet_id})
                         item = db_response.get('Item', {})
                         
+                        ssm_threshold = get_ssm_parameter("/smart-helmet/config/lwt_grace_period_seconds", 900)
+                        
+                        is_graceful = False
                         if item.get('status') == 'GRACEFUL_SHUTDOWN':
+                            shutdown_time = float(item.get('shutdown_timestamp', 0))
+                            if time.time() - shutdown_time < ssm_threshold:
+                                is_graceful = True
+
+                        if is_graceful:
                             logging.info(f"LWT Ignored - Helmet {helmet_id} gracefully shut down recently.")
                         else:
                             logging.error(f"GENUINE LWT: Helmet {helmet_id} dropped offline! Firing alert.")

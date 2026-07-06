@@ -33,3 +33,11 @@ output "execution-registry-name" {
 output "execution-registry-arn" {
   value = aws_dynamodb_table.smart-helmet-execution-registry.arn
 }
+
+output "device-status-db-table-name" {
+  value = aws_dynamodb_table.smart-helmet-device-status.name
+}
+
+output "device-status-db-table-arn" {
+  value = aws_dynamodb_table.smart-helmet-device-status.arn
+}

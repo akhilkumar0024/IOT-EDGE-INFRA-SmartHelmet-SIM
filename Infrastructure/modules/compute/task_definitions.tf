@@ -70,7 +70,8 @@ resource "aws_ecs_task_definition" "processing-task" {
         { name = "LWT_QUEUE_URL", value = var.LWT-queue-url },
         { name = "ALERT_QUEUE_URL", value = var.alert-queue-url },
         { name = "HOT_STORAGE_NAME", value = var.hot-storage-name },
-        { name = "COLD_STORAGE_NAME", value = var.cold-storage-name }
+        { name = "COLD_STORAGE_NAME", value = var.cold-storage-name },
+        { name = "DEVICE_STATUS_DB_TABLE_NAME", value = var.device-status-db-table-name }
       ],
       portMappings = [
         {

@@ -13,3 +13,8 @@ variable "execution-registry-name" {
   type        = string
   default     = "smart-helmet-execution-registry"
 }
+
+variable "device-status-db-table-name" {
+  description = "name for the device status database table"
+  type        = string
+}

@@ -77,3 +77,9 @@ variable "ecs-log-group-name" {
   type        = string
   default     = "/ecs/smart-helmet-cluster"
 }
+
+variable "device-status-db-table-name" {
+  description = "Name for the device status database table"
+  type        = string
+  default     = "smart-helmet-device-status"
+}

@@ -109,3 +109,13 @@ variable "ecs-log-group-name" {
   description = "CloudWatch Log Group name for ECS Cluster"
   type        = string
 }
+
+variable "device-status-db-table-name" {
+  type        = string
+  description = "Name of the device status DynamoDB table"
+}
+
+variable "device-status-db-table-arn" {
+  type        = string
+  description = "ARN of the device status DynamoDB table"
+}

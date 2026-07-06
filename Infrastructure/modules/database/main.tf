@@ -68,3 +68,25 @@ resource "aws_dynamodb_table" "smart-helmet-execution-registry" {
     Name = var.execution-registry-name
   }
 }
+
+resource "aws_dynamodb_table" "smart-helmet-device-status" {
+  name           = var.device-status-db-table-name
+  billing_mode   = "PROVISIONED"
+  hash_key       = "helmetId"
+  read_capacity  = 5
+  write_capacity = 5
+
+  attribute {
+    name = "helmetId"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "TimeToExist"
+    enabled        = true
+  }
+
+  tags = {
+    Name = var.device-status-db-table-name
+  }
+}

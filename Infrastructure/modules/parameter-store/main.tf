@@ -35,3 +35,9 @@ resource "aws_ssm_parameter" "firmware_anomaly_threshold" {
   type  = "String"
   value = "50"
 }
+
+resource "aws_ssm_parameter" "lwt_grace_period" {
+  name  = "/smart-helmet/config/lwt_grace_period_seconds"
+  type  = "String"
+  value = "900"
+}
