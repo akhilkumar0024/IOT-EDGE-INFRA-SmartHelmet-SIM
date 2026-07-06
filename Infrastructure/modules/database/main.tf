@@ -73,8 +73,8 @@ resource "aws_dynamodb_table" "smart-helmet-device-status" {
   name           = var.device-status-db-table-name
   billing_mode   = "PROVISIONED"
   hash_key       = "helmetId"
-  read_capacity  = 5
-  write_capacity = 5
+  read_capacity  = 3
+  write_capacity = 3
 
   attribute {
     name = "helmetId"
