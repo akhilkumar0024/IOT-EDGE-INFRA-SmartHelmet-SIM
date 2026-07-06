@@ -67,9 +67,9 @@ resource "aws_sfn_state_machine" "alert_state_machine" {
         Parameters = {
           TableName = var.cold-storage-name
           Item = {
-            "PK"     = { "S.$" = "States.Format('HELMET#{}', $.helmet_id)" }
-            "SK"     = { "S.$" = "States.Format('INCIDENT#{}', $.timestamp)" }
-            "Status" = { "S" = "CONFIRMED_BY_TIMEOUT" }
+            "helmetId"  = { "S.$" = "$.helmet_id" }
+            "timestamp" = { "N.$" = "States.Format('{}', $.timestamp)" }
+            "Status"    = { "S" = "CONFIRMED_BY_TIMEOUT" }
           }
         }
         End = true

@@ -22,7 +22,8 @@ resource "aws_iot_policy" "helmet-simulator-policy" {
         Resource = [
           "arn:aws:iot:*:*:topic/helmet/*/telemetry",
           "arn:aws:iot:*:*:topic/helmet/*/alert/override",
-          "arn:aws:iot:*:*:topic/helmet/*/lwt"
+          "arn:aws:iot:*:*:topic/helmet/*/lwt",
+          "arn:aws:iot:*:*:topic/helmet/*/control"
         ]
       },
       {
