@@ -84,10 +84,11 @@ module "iot-core" {
 }
 
 module "step-function" {
-  source                 = "./modules/step-functions"
-  cold-storage-arn       = module.database.cold-storage-arn
-  execution-registry-arn = module.database.execution-registry-arn
-  cold-storage-name      = var.cold-storage-name
+  source                  = "./modules/step-functions"
+  cold-storage-arn        = module.database.cold-storage-arn
+  execution-registry-arn  = module.database.execution-registry-arn
+  execution-registry-name = module.database.execution-registry-name
+  cold-storage-name       = var.cold-storage-name
 }
 
 module "monitoring" {

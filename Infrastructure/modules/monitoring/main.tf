@@ -1,6 +1,6 @@
 #1. SNS Topic
 resource "aws_sns_topic" "smart-helmet-infra-alerts" {
-  name = "user-updates-topic"
+  name = "infra-monitoring-alerts-topic"
 }
 
 #2.SNS Subscription
@@ -33,7 +33,7 @@ resource "aws_cloudwatch_metric_alarm" "telemetry_dlq_alarm" {
     QueueName = var.telemetry-dlq-name
   }
 
-  # When the alarm goes off, send a message to the SNS megaphone
+  # When the alarm goes off, send a message to the SNS
   alarm_actions = [aws_sns_topic.smart-helmet-infra-alerts.arn]
 }
 

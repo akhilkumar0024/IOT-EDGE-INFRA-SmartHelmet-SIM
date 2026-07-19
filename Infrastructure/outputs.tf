@@ -130,3 +130,8 @@ output "iot_endpoint_url" {
   description = "The endpoint URL the Python simulator will connect to"
   value       = module.iot-core.iot_endpoint_url
 }
+
+output "reconciliation_state_machine_arn" {
+  description = "The ARN of the Reconciliation State Machine"
+  value       = module.step-function.reconciliation_state_machine_arn
+}
