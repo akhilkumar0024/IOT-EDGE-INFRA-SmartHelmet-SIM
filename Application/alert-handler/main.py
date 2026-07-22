@@ -6,6 +6,7 @@ import boto3
 import signal
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from decimal import Decimal
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -13,6 +14,7 @@ ALERT_QUEUE_URL = os.getenv('ALERT_QUEUE_URL')
 OVERRIDE_QUEUE_URL = os.getenv('OVERRIDE_QUEUE_URL')
 EXECUTION_REGISTRY_NAME = os.getenv('EXECUTION_REGISTRY_NAME')
 STEP_FUNCTION_ARN = os.getenv('STEP_FUNCTION_ARN')
+RECONCILIATION_STEP_FUNCTION_ARN = os.getenv('RECONCILIATION_STEP_FUNCTION_ARN')
 IOT_ENDPOINT_URL = os.getenv('IOT_ENDPOINT_URL')
 
 sqs = boto3.client('sqs', region_name='ap-south-1')
@@ -60,32 +62,25 @@ def handle_alert(msg):
         return
 
     # Fetch configuration from SSM Parameter Store as requested for production readiness
-    if alert_type == 'false_positive':
+    if alert_type == 'FP_CD':
+        status = 'FP_CD'
         wait_seconds = get_ssm_parameter("/smart-helmet/config/false_positive_window_seconds", 5)
         message = f"False positive detected. Countdown: {wait_seconds}s"
-    elif alert_type == 'standard':
+    elif alert_type == 'retrospective':
+        status = 'STD_CD'
+        wait_seconds = get_ssm_parameter("/smart-helmet/config/retrospective_alert_window_seconds", 300)
+        message = f"Retrospective crash detected. Countdown: {wait_seconds}s"
+    elif alert_type == 'STD_CD':
+        status = 'STD_CD'
         wait_seconds = get_ssm_parameter("/smart-helmet/config/standard_alert_window_seconds", 30)
         message = f"Crash detected. Countdown: {wait_seconds}s"
     else:
-        wait_seconds = get_ssm_parameter("/smart-helmet/config/retrospective_alert_window_seconds", 300)
-        message = f"Retrospective crash detected. Countdown: {wait_seconds}s"
+        status = 'STD_CD'
+        wait_seconds = get_ssm_parameter("/smart-helmet/config/standard_alert_window_seconds", 30)
+        message = f"Crash detected. Countdown: {wait_seconds}s"
 
     table = dynamodb.Table(EXECUTION_REGISTRY_NAME)
 
-    # 1. Race Condition Fix: Check for PendingOverride flag BEFORE starting execution
-    try:
-        response = table.get_item(Key={'helmetId': helmet_id})
-        item = response.get('Item')
-        if item and item.get('ExecutionArn') == 'PENDING_OVERRIDE':
-            logging.info(f"Alert ABORTED. Rider override arrived before alert processing finished for {helmet_id}")
-            # Delete the pending flag and return early
-            table.delete_item(Key={'helmetId': helmet_id})
-            publish_to_helmet(helmet_id, "DISMISS", "Alert automatically cancelled.")
-            return
-    except Exception as e:
-        logging.error(f"Error checking pending override: {str(e)}")
-
-    # 2. Race Condition Fix: Change Execution Order - Backend first, UI last!
     try:
         execution_input = {
             "helmet_id": helmet_id,
@@ -98,18 +93,18 @@ def handle_alert(msg):
         )
         execution_arn = response['executionArn']
         
-        # Write ARN to Execution Registry DynamoDB Table
+        # Write ARN and status to Execution Registry DynamoDB Table
         table.put_item(
             Item={
                 'helmetId': helmet_id,
                 'ExecutionArn': execution_arn,
+                'status': status,
+                'timestamp': Decimal(str(timestamp)),
                 'TimeToExist': int(time.time()) + (wait_seconds + 60)
             }
         )
-        logging.info(f"Started Step Function {execution_arn} for {helmet_id}")
+        logging.info(f"Started Step Function {execution_arn} with status {status} for {helmet_id}")
 
-        # Publish START COUNTDOWN to Helmet LAST.
-        # This guarantees the backend is ready to receive an override tap.
         publish_to_helmet(helmet_id, "START_COUNTDOWN", message)
 
     except Exception as e:
@@ -118,53 +113,107 @@ def handle_alert(msg):
 def handle_override(msg):
     body = json.loads(msg['Body'])
     helmet_id = body.get('helmet_id')
+    action = body.get('action')
+    timestamp = body.get('timestamp', int(time.time()))
     
     if not helmet_id:
         return
 
-    # 1. Look up execution ARN
     table = dynamodb.Table(EXECUTION_REGISTRY_NAME)
     try:
-        response = table.get_item(Key={'helmetId': helmet_id})
-        item = response.get('Item')
-        
-        if item and 'ExecutionArn' in item:
-            execution_arn = item['ExecutionArn']
+        # Scenario 2A: False Positive Override
+        if action == 'FP_OVERRIDE':
+            logging.info(f"Rider override FP_OVERRIDE received for {helmet_id}. Triggering standard countdown.")
             
-            # 2. Stop Execution
-            try:
-                sfn.stop_execution(
-                    executionArn=execution_arn,
-                    error="CancelledByRider",
-                    cause="The rider pressed the cancel button."
-                )
-                logging.info(f"Stopped execution {execution_arn} for {helmet_id}")
-            except sfn.exceptions.ExecutionDoesNotExist:
-                logging.warning(f"Execution {execution_arn} already finished or does not exist.")
-
-            # 3. Publish DISMISS to helmet
-            publish_to_helmet(helmet_id, "DISMISS", "Alert cancelled successfully.")
-
-            # 4. Remove from registry
-            table.delete_item(Key={'helmetId': helmet_id})
-        elif item and item.get('ExecutionArn') == 'PENDING_OVERRIDE':
-            logging.info(f"Pending override flag already exists for {helmet_id}")
-        else:
-            # Race Condition Fix: Write PendingOverride flag
-            logging.warning(f"No active execution found for {helmet_id}. Writing PENDING_OVERRIDE flag.")
+            # Read standard warning countdown seconds
+            standard_wait = get_ssm_parameter("/smart-helmet/config/standard_alert_window_seconds", 30)
+            execution_input = {
+                "helmet_id": helmet_id,
+                "timestamp": timestamp,
+                "wait_seconds": standard_wait
+            }
+            response = sfn.start_execution(
+                stateMachineArn=STEP_FUNCTION_ARN,
+                input=json.dumps(execution_input)
+            )
+            execution_arn = response['executionArn']
+            
+            # Upsert registry row to STD_CD
             table.put_item(
                 Item={
                     'helmetId': helmet_id,
-                    'ExecutionArn': 'PENDING_OVERRIDE',
-                    'TimeToExist': int(time.time()) + 60 # 60 second TTL
+                    'ExecutionArn': execution_arn,
+                    'status': 'STD_CD',
+                    'timestamp': Decimal(str(timestamp)),
+                    'TimeToExist': int(time.time()) + (standard_wait + 60)
                 }
             )
+            
+            # Publish standard countdown warn
+            message = f"Crash warning active. Countdown: {standard_wait}s"
+            publish_to_helmet(helmet_id, "START_COUNTDOWN", message)
+
+        # Scenario 1A/1B: Cancellation
+        elif action in ['cancel', 'CANCEL']:
+            response = table.get_item(Key={'helmetId': helmet_id})
+            item = response.get('Item')
+            
+            if item:
+                # Scenario 1A: Active countdown exists
+                execution_arn = item['ExecutionArn']
+                logging.info(f"Rider cancel received during active countdown for {helmet_id}. Updating registry status to CANCEL.")
+                
+                table.put_item(
+                    Item={
+                        'helmetId': helmet_id,
+                        'ExecutionArn': execution_arn,
+                        'status': 'CANCEL',
+                        'timestamp': item.get('timestamp', Decimal(str(timestamp))),
+                        'TimeToExist': int(time.time()) + 60
+                    }
+                )
+                publish_to_helmet(helmet_id, "DISMISS", "Alert cancelled successfully.")
+            
+            else:
+                # Scenario 1B: Late Cancel (registry row missing)
+                logging.warning(f"Rider cancel received but registry row is missing for {helmet_id}. Starting SFN2 reconciliation.")
+                
+                # Calculate if late cancel criteria are met:
+                # ts2 - ts1 < 30 seconds AND t_now - ts1 < 300 seconds
+                ts1 = float(timestamp) # crash timestamp
+                ts2 = float(body.get('timestamp', time.time())) # rider override timestamp
+                t_now = time.time()
+                is_reconcilable = (ts2 - ts1 < 30) and (t_now - ts1 < 300)
+                
+                reconcile_input = {
+                    "helmet_id": helmet_id,
+                    "timestamp": timestamp,
+                    "is_reconcilable": is_reconcilable
+                }
+                
+                rec_response = sfn.start_execution(
+                    stateMachineArn=RECONCILIATION_STEP_FUNCTION_ARN,
+                    input=json.dumps(reconcile_input)
+                )
+                rec_execution_arn = rec_response['executionArn']
+                
+                # Write reconciliation lease to registry
+                table.put_item(
+                    Item={
+                        'helmetId': helmet_id,
+                        'ExecutionArn': rec_execution_arn,
+                        'status': 'CANCEL',
+                        'timestamp': Decimal(str(timestamp)),
+                        'TimeToExist': int(time.time()) + 60
+                    }
+                )
+                publish_to_helmet(helmet_id, "DISMISS", "Stand-down initiated.")
 
     except Exception as e:
         logging.error(f"Failed to process override for {helmet_id}: {str(e)}")
 
 def process_messages():
-    if not ALERT_QUEUE_URL or not OVERRIDE_QUEUE_URL or not STEP_FUNCTION_ARN or not EXECUTION_REGISTRY_NAME:
+    if not ALERT_QUEUE_URL or not OVERRIDE_QUEUE_URL or not STEP_FUNCTION_ARN or not EXECUTION_REGISTRY_NAME or not RECONCILIATION_STEP_FUNCTION_ARN:
         logging.error("Missing required environment variables.")
         return
 

@@ -56,7 +56,8 @@ resource "aws_iam_policy" "Telemetry-Infra-Role-Policy" {
         Effect = "Allow"
         Action = [
           "dynamodb:PutItem",
-          "dynamodb:UpdateItem"
+          "dynamodb:UpdateItem",
+          "dynamodb:BatchWriteItem"
         ]
         Resource = var.hot-storage-arn
       },
@@ -256,7 +257,10 @@ resource "aws_iam_policy" "Alert-Infra-Role-Policy" {
           "states:StartExecution",
           "states:StopExecution"
         ]
-        Resource = var.step_function_arn
+        Resource = [
+          var.step_function_arn,
+          var.reconciliation_step_function_arn
+        ]
       },
       {
         Sid      = "PublishToHelmet"

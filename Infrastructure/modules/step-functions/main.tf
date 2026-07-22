@@ -137,7 +137,7 @@ resource "aws_sfn_state_machine" "alert_state_machine" {
             "message"     = "Emergency Alert: A crash has been confirmed for the rider."
           }
         }
-        ResultPath = "$.sns_result"
+        ResultPath = null
         Next       = "WriteColdStorageConfirmed"
       }
       WriteColdStorageCancelled = {
@@ -151,7 +151,8 @@ resource "aws_sfn_state_machine" "alert_state_machine" {
             "Status"    = { "S" = "INCIDENT_CANCELLED" }
           }
         }
-        Next = "DeleteExecutionRegistry"
+        ResultPath = null
+        Next       = "DeleteExecutionRegistry"
       }
       WriteColdStorageFPDismissed = {
         Type     = "Task"
@@ -164,7 +165,8 @@ resource "aws_sfn_state_machine" "alert_state_machine" {
             "Status"    = { "S" = "FALSE_POSITIVE_DISMISSED" }
           }
         }
-        Next = "DeleteExecutionRegistry"
+        ResultPath = null
+        Next       = "DeleteExecutionRegistry"
       }
       WriteColdStorageConfirmed = {
         Type     = "Task"
@@ -177,7 +179,8 @@ resource "aws_sfn_state_machine" "alert_state_machine" {
             "Status"    = { "S" = "INCIDENT_CONFIRMED" }
           }
         }
-        Next = "DeleteExecutionRegistry"
+        ResultPath = null
+        Next       = "DeleteExecutionRegistry"
       }
       DeleteExecutionRegistry = {
         Type     = "Task"
@@ -188,7 +191,8 @@ resource "aws_sfn_state_machine" "alert_state_machine" {
             "helmetId" = { "S.$" = "$.helmet_id" }
           }
         }
-        End = true
+        ResultPath = null
+        End        = true
       }
       SilentExit = {
         Type = "Pass"
@@ -215,11 +219,12 @@ resource "aws_sfn_state_machine" "reconciliation_state_machine" {
             "helmetId" = { "S.$" = "$.helmet_id" }
           }
         }
-        Next = "QueryColdStorage"
+        ResultPath = null
+        Next       = "QueryColdStorage"
       }
       QueryColdStorage = {
         Type     = "Task"
-        Resource = "arn:aws:states:::dynamodb:query"
+        Resource = "arn:aws:states:::aws-sdk:dynamodb:query"
         Parameters = {
           TableName              = var.cold-storage-name
           KeyConditionExpression = "helmetId = :h"
@@ -254,7 +259,7 @@ resource "aws_sfn_state_machine" "reconciliation_state_machine" {
             "message"    = "Emergency Stand-down: The rider cancelled the emergency alert."
           }
         }
-        ResultPath = "$.sns_result"
+        ResultPath = null
         Next       = "UpdateColdStorageCancelled"
       }
       UpdateColdStorageCancelled = {
@@ -268,7 +273,8 @@ resource "aws_sfn_state_machine" "reconciliation_state_machine" {
             "Status"    = { "S" = "RESOLVED_BY_LATE_CANCEL" }
           }
         }
-        End = true
+        ResultPath = null
+        End        = true
       }
       SilentExit = {
         Type = "Pass"

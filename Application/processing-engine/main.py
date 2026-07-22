@@ -8,6 +8,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from decimal import Decimal
 
+from boto3.dynamodb.conditions import Key
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 CRASH_QUEUE_URL = os.getenv('CRASH_QUEUE_URL')
@@ -57,18 +59,39 @@ def process_messages():
                     timestamp = body.get('timestamp')
                     speed = float(body.get('speed', 0))
 
-                    logging.info(f"Processing crash event for {helmet_id} at {timestamp}")
+                    if not helmet_id or timestamp is None:
+                        logging.warning(f"Invalid crash message: {body}")
+                        sqs.delete_message(QueueUrl=CRASH_QUEUE_URL, ReceiptHandle=msg['ReceiptHandle'])
+                        continue
 
-                    # Basic Validation Logic:
-                    # If speed was > 10 mph during the crash spike, consider it a genuine crash.
-                    # If speed was <= 10 mph, it was probably dropped from a table or low-impact fall -> False Positive.
-                    alert_type = 'standard' if speed > 10 else 'false_positive'
-                    
-                    logging.info(f"Validated crash as: {alert_type.upper()} (Speed: {speed})")
+                    ts_float = float(timestamp)
+                    logging.info(f"Processing crash event for {helmet_id} at {ts_float}")
+
+                    # Query Hot Storage for 10-second window before impact
+                    try:
+                        start_ts = Decimal(str(ts_float - 10))
+                        end_ts = Decimal(str(ts_float))
+                        db_res = telemetry_table.query(
+                            KeyConditionExpression=Key('helmetId').eq(helmet_id) & Key('timestamp').between(start_ts, end_ts)
+                        )
+                        items = db_res.get('Items', [])
+                    except Exception as err:
+                        logging.error(f"Failed to query Hot Storage: {err}")
+                        items = []
+
+                    if not items:
+                        # Branch B: Hot Storage data unavailable -> degrade to retrospective alert
+                        logging.warning(f"No Hot Storage telemetry found for {helmet_id} around {ts_float}. Degrading to RETROSPECTIVE alert.")
+                        alert_type = 'retrospective'
+                    else:
+                        # Branch A: Full Telemetry Validation using surrounding datapoints
+                        max_speed = max([float(item.get('speed', 0)) for item in items] + [speed])
+                        alert_type = 'STD_CD' if max_speed > 10 else 'FP_CD'
+                        logging.info(f"Validated crash using {len(items)} telemetry records. Outcome: {alert_type} (Max Speed: {max_speed})")
 
                     alert_event = {
                         'helmet_id': helmet_id,
-                        'timestamp': timestamp,
+                        'timestamp': ts_float,
                         'alert_type': alert_type,
                         'speed': speed,
                         'location': body.get('location', 'Unknown')

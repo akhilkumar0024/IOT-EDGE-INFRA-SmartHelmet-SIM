@@ -120,7 +120,8 @@ resource "aws_ecs_task_definition" "alerts-task" {
         { name = "ALERT_QUEUE_URL", value = var.alert-queue-url },
         { name = "OVERRIDE_QUEUE_URL", value = var.override-queue-url },
         { name = "EXECUTION_REGISTRY_NAME", value = var.execution-registry-name },
-        { name = "STEP_FUNCTION_ARN", value = var.step_function_arn }
+        { name = "STEP_FUNCTION_ARN", value = var.step_function_arn },
+        { name = "RECONCILIATION_STEP_FUNCTION_ARN", value = var.reconciliation_step_function_arn }
       ],
       portMappings = [
         {

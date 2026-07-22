@@ -75,6 +75,11 @@ variable "step_function_arn" {
   type        = string
 }
 
+variable "reconciliation_step_function_arn" {
+  description = "The ARN of the Reconciliation Step Function"
+  type        = string
+}
+
 variable "telemetry-queue-name" {
   description = "name of the telemetry queue"
   type        = string

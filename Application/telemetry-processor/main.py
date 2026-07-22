@@ -48,37 +48,84 @@ def process_messages():
                 try:
                     # Parse the payload. Boto3 DynamoDB requires floats to be Decimals.
                     body = json.loads(msg['Body'], parse_float=Decimal)
-                    
                     helmet_id = body.get('helmet_id')
-                    timestamp = body.get('timestamp')
-                    crash_flag = body.get('crash_flag', False)
                     
-                    if not helmet_id or not timestamp:
-                        logging.warning(f"Invalid payload missing helmet_id or timestamp: {body}")
+                    if not helmet_id:
+                        logging.warning(f"Invalid payload missing helmet_id: {body}")
+                        sqs.delete_message(QueueUrl=TELEMETRY_QUEUE_URL, ReceiptHandle=msg['ReceiptHandle'])
                         continue
-                        
-                    # 1. Write to Hot Storage (DynamoDB)
-                    item = {
-                        'helmetId': helmet_id,
-                        'timestamp': Decimal(str(timestamp)),
-                        'accelerometer': body.get('accelerometer', {}),
-                        'speed': body.get('speed', Decimal('0')),
-                        'crash_flag': crash_flag,
-                        'TimeToExist': int(time.time()) + (7 * 24 * 3600) # 7 days TTL
-                    }
-                    
-                    table.put_item(Item=item)
-                    logging.info(f"Saved telemetry for {helmet_id} at {timestamp}")
 
-                    # 2. Forward to Crash Queue if crash detected
-                    if crash_flag:
-                        logging.warning(f"CRASH FLAG DETECTED for {helmet_id}!")
-                        if CRASH_QUEUE_URL:
+                    ttl_timestamp = int(time.time()) + (24 * 3600) # 24 hours TTL per design specification
+                    items_to_write = []
+                    crash_events = []
+
+                    # Check if payload contains a telemetry array (batch mode)
+                    if 'telemetry' in body and isinstance(body['telemetry'], list):
+                        telemetry_list = body['telemetry']
+                        for dp in telemetry_list:
+                            ts = dp.get('timestamp') or body.get('batch_timestamp') or body.get('timestamp')
+                            if ts is None:
+                                continue
+                            is_crash = bool(dp.get('crash_flag', False) or body.get('crash_flag', False))
+                            speed = dp.get('speed', Decimal('0'))
+                            accel = dp.get('accelerometer', {})
+                            
+                            items_to_write.append({
+                                'helmetId': helmet_id,
+                                'timestamp': Decimal(str(ts)),
+                                'accelerometer': accel,
+                                'speed': speed,
+                                'crash_flag': is_crash,
+                                'TimeToExist': ttl_timestamp
+                            })
+                            
+                            if is_crash:
+                                crash_events.append({
+                                    'helmet_id': helmet_id,
+                                    'timestamp': float(ts),
+                                    'speed': float(speed),
+                                    'location': dp.get('location', body.get('location', 'Unknown'))
+                                })
+                    else:
+                        # Single item payload mode
+                        ts = body.get('timestamp')
+                        if ts is not None:
+                            is_crash = bool(body.get('crash_flag', False))
+                            speed = body.get('speed', Decimal('0'))
+                            accel = body.get('accelerometer', {})
+                            
+                            items_to_write.append({
+                                'helmetId': helmet_id,
+                                'timestamp': Decimal(str(ts)),
+                                'accelerometer': accel,
+                                'speed': speed,
+                                'crash_flag': is_crash,
+                                'TimeToExist': ttl_timestamp
+                            })
+                            
+                            if is_crash:
+                                crash_events.append({
+                                    'helmet_id': helmet_id,
+                                    'timestamp': float(ts),
+                                    'speed': float(speed),
+                                    'location': body.get('location', 'Unknown')
+                                })
+
+                    # 1. Batch Write items to Hot Storage (DynamoDB)
+                    if items_to_write:
+                        with table.batch_writer() as batch:
+                            for item in items_to_write:
+                                batch.put_item(Item=item)
+                        logging.info(f"Saved batch of {len(items_to_write)} telemetry records for {helmet_id}")
+
+                    # 2. Forward crash events to Crash Queue
+                    if crash_events and CRASH_QUEUE_URL:
+                        for event in crash_events:
                             sqs.send_message(
                                 QueueUrl=CRASH_QUEUE_URL,
-                                MessageBody=msg['Body'] # Forward original raw string
+                                MessageBody=json.dumps(event)
                             )
-                            logging.info(f"Forwarded crash event to crash-queue for {helmet_id}")
+                            logging.warning(f"Forwarded crash event for {helmet_id} at timestamp {event['timestamp']} to crash-queue")
 
                     # 3. Delete message from Telemetry Queue
                     sqs.delete_message(
