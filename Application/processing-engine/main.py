@@ -67,9 +67,9 @@ def process_messages():
                     ts_float = float(timestamp)
                     logging.info(f"Processing crash event for {helmet_id} at {ts_float}")
 
-                    # Query Hot Storage for 10-second window before impact
+                    # Query Hot Storage for 15-second window before impact
                     try:
-                        start_ts = Decimal(str(ts_float - 10))
+                        start_ts = Decimal(str(ts_float - 15))
                         end_ts = Decimal(str(ts_float))
                         db_res = telemetry_table.query(
                             KeyConditionExpression=Key('helmetId').eq(helmet_id) & Key('timestamp').between(start_ts, end_ts)
@@ -79,15 +79,23 @@ def process_messages():
                         logging.error(f"Failed to query Hot Storage: {err}")
                         items = []
 
-                    if not items:
+                    # Flatten data points from returned batch rows
+                    all_datapoints = []
+                    for item in items:
+                        if 'telemetry' in item and isinstance(item['telemetry'], list):
+                            all_datapoints.extend(item['telemetry'])
+                        else:
+                            all_datapoints.append(item)
+
+                    if not all_datapoints:
                         # Branch B: Hot Storage data unavailable -> degrade to retrospective alert
                         logging.warning(f"No Hot Storage telemetry found for {helmet_id} around {ts_float}. Degrading to RETROSPECTIVE alert.")
                         alert_type = 'retrospective'
                     else:
                         # Branch A: Full Telemetry Validation using surrounding datapoints
-                        max_speed = max([float(item.get('speed', 0)) for item in items] + [speed])
+                        max_speed = max([float(dp.get('speed', 0)) for dp in all_datapoints] + [speed])
                         alert_type = 'STD_CD' if max_speed > 10 else 'FP_CD'
-                        logging.info(f"Validated crash using {len(items)} telemetry records. Outcome: {alert_type} (Max Speed: {max_speed})")
+                        logging.info(f"Validated crash using {len(all_datapoints)} telemetry records across {len(items)} batch rows. Outcome: {alert_type} (Max Speed: {max_speed})")
 
                     alert_event = {
                         'helmet_id': helmet_id,
