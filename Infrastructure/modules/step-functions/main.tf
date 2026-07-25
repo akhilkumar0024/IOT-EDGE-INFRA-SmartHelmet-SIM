@@ -47,6 +47,11 @@ resource "aws_iam_policy" "step-functions-policy" {
       },
       {
         Effect   = "Allow"
+        Action   = "ses:SendEmail"
+        Resource = "arn:aws:ses:*:*:identity/*"
+      },
+      {
+        Effect   = "Allow"
         Action   = "iot:Publish"
         Resource = "arn:aws:iot:*:*:topic/helmet/*/alert/status"
       }
@@ -123,19 +128,88 @@ resource "aws_sfn_state_machine" "alert_state_machine" {
             "Next" : "WriteColdStorageFPDismissed"
           }
         ]
-        Default = "SendSNSEmergencyAlert"
+        Default = "FetchColdStorageProfile"
+      }
+      FetchColdStorageProfile = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::aws-sdk:dynamodb:query"
+        Parameters = {
+          TableName              = var.cold-storage-name
+          KeyConditionExpression = "helmetId = :h"
+          ExpressionAttributeValues = {
+            ":h" = { "S.$" = "$.helmet_id" }
+          }
+          ScanIndexForward = false
+          Limit            = 1
+        }
+        ResultPath = "$.cold_storage_profile"
+        Next       = "CheckNOKEmailPresent"
+      }
+      CheckNOKEmailPresent = {
+        Type = "Choice"
+        Choices = [
+          {
+            "And" : [
+              {
+                "Variable" : "$.cold_storage_profile.Items[0]",
+                "IsPresent" : true
+              },
+              {
+                "Variable" : "$.cold_storage_profile.Items[0].next_of_kin_email",
+                "IsPresent" : true
+              },
+              {
+                "Variable" : "$.cold_storage_profile.Items[0].next_of_kin_email.S",
+                "IsPresent" : true
+              }
+            ],
+            "Next" : "SendSNSEmergencyAlert"
+          }
+        ]
+        Default = "SendAdminMissingNOKAlert"
+      }
+      SendAdminMissingNOKAlert = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::aws-sdk:ses:sendEmail"
+        Parameters = {
+          Destination = {
+            ToAddresses = [
+              var.sender_email
+            ]
+          }
+          Message = {
+            Subject = {
+              "Data.$" = "States.Format('ALERT SYSTEM WARNING: Missing Next-of-Kin Email for Helmet {}', $.helmet_id)"
+            }
+            Body = {
+              Text = {
+                "Data.$" = "States.Format('SYSTEM WARNING: Crash confirmed for Helmet ID: {}. Timestamp: {}.\n\nHowever, NO Next-of-Kin email address was found in Cold Storage record. Please review rider profile registration immediately.', $.helmet_id, $.timestamp)"
+              }
+            }
+          }
+          Source = var.sender_email
+        }
+        ResultPath = null
+        Next       = "WriteColdStorageConfirmed"
       }
       SendSNSEmergencyAlert = {
         Type     = "Task"
-        Resource = "arn:aws:states:::sns:publish"
+        Resource = "arn:aws:states:::aws-sdk:ses:sendEmail"
         Parameters = {
-          TopicArn = aws_sns_topic.smart-helmet-emergency-alerts.arn
-          Message = {
-            "helmetId.$"  = "$.helmet_id"
-            "timestamp.$" = "$.timestamp"
-            "status"      = "INCIDENT_CONFIRMED"
-            "message"     = "Emergency Alert: A crash has been confirmed for the rider."
+          Destination = {
+            "ToAddresses.$" = "States.Array($.cold_storage_profile.Items[0].next_of_kin_email.S)"
           }
+          Message = {
+            Subject = {
+              "Data.$" = "States.Format('CRITICAL EMERGENCY ALERT: Helmet {} Crash Confirmed', $.helmet_id)"
+            }
+            Body = {
+              Text = {
+                "Data.$" = "States.Format('EMERGENCY INCIDENT CONFIRMED!\n\nHelmet ID: {}\nTimestamp: {}\n\nImmediate emergency assistance dispatched.', $.helmet_id, $.timestamp)"
+              }
+            }
+          }
+          Source = var.sender_email
         }
         ResultPath = null
         Next       = "WriteColdStorageConfirmed"
@@ -243,25 +317,84 @@ resource "aws_sfn_state_machine" "reconciliation_state_machine" {
           {
             "Variable"      = "$.is_reconcilable"
             "BooleanEquals" = true
-            "Next"          = "SendSNSStandDown"
+            "Next"          = "CheckNOKEmailPresentReconcile"
           }
         ]
         Default = "SilentExit"
       }
-      SendSNSStandDown = {
-        Type     = "Task"
-        Resource = "arn:aws:states:::sns:publish"
-        Parameters = {
-          TopicArn = aws_sns_topic.smart-helmet-emergency-alerts.arn
-          Message = {
-            "helmetId.$" = "$.helmet_id"
-            "status"     = "RESOLVED_BY_LATE_CANCEL"
-            "message"    = "Emergency Stand-down: The rider cancelled the emergency alert."
+      CheckNOKEmailPresentReconcile = {
+        Type = "Choice"
+        Choices = [
+          {
+            "And" : [
+              {
+                "Variable" : "$.query_result.Items[0]",
+                "IsPresent" : true
+              },
+              {
+                "Variable" : "$.query_result.Items[0].next_of_kin_email",
+                "IsPresent" : true
+              },
+              {
+                "Variable" : "$.query_result.Items[0].next_of_kin_email.S",
+                "IsPresent" : true
+              }
+            ],
+            "Next" : "SendSNSStandDown"
           }
+        ]
+        Default = "SendAdminMissingNOKStandDown"
+      }
+      SendAdminMissingNOKStandDown = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::aws-sdk:ses:sendEmail"
+        Parameters = {
+          Destination = {
+            ToAddresses = [
+              var.sender_email
+            ]
+          }
+          Message = {
+            Subject = {
+              "Data.$" = "States.Format('EMERGENCY STAND-DOWN WARNING: Missing Next-of-Kin Email for Helmet {}', $.helmet_id)"
+            }
+            Body = {
+              Text = {
+                "Data.$" = "States.Format('SYSTEM WARNING: Emergency stand-down initiated for Helmet ID: {}.\n\nHowever, Next-of-Kin email address was missing in Cold Storage. Admin notified.', $.helmet_id)"
+              }
+            }
+          }
+          Source = var.sender_email
         }
         ResultPath = null
         Next       = "UpdateColdStorageCancelled"
       }
+      SendSNSStandDown = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::aws-sdk:ses:sendEmail"
+        Parameters = {
+          Destination = {
+            "ToAddresses.$" = "States.Array($.query_result.Items[0].next_of_kin_email.S)"
+          }
+          Message = {
+            Subject = {
+              "Data.$" = "States.Format('EMERGENCY STAND-DOWN: Helmet {} Alert Resolved', $.helmet_id)"
+            }
+            Body = {
+              Text = {
+                "Data.$" = "States.Format('EMERGENCY STAND-DOWN!\n\nHelmet ID: {}\nStatus: RESOLVED_BY_LATE_CANCEL\n\nThe rider cancelled the alert within the safe window.', $.helmet_id)"
+              }
+            }
+          }
+          Source = var.sender_email
+        }
+        ResultPath = null
+        Next       = "UpdateColdStorageCancelled"
+      }
+
+
+
+
       UpdateColdStorageCancelled = {
         Type     = "Task"
         Resource = "arn:aws:states:::dynamodb:putItem"

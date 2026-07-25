@@ -90,7 +90,11 @@ module "step-function" {
   execution-registry-arn  = module.database.execution-registry-arn
   execution-registry-name = module.database.execution-registry-name
   cold-storage-name       = var.cold-storage-name
+  sender_email            = var.sns-email-address
 }
+
+
+
 
 module "monitoring" {
   source                           = "./modules/monitoring"
