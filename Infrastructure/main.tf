@@ -121,3 +121,13 @@ module "monitoring" {
 
   ecs-log-group-name = var.ecs-log-group-name
 }
+
+module "oidc" {
+  source              = "./modules/oidc"
+  github_repo         = "akhilkumar0024/IOT-EDGE-INFRA-SmartHelmet-SIM"
+  deploy_role_name    = "GitHubActionsAppDeployRole"
+  terraform_role_name = "GitHubActionsInfraCheckRole"
+}
+
+
+

@@ -1,0 +1,123 @@
+name: Deploy Application Code
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Application/**'
+  workflow_dispatch:
+
+# Required for requesting the JWT token via OIDC
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy_application_code:
+    name: "Build Microservices & Deploy to ECS Fargate"
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout repository code
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # 2. Assume IAM Role via OIDC
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-region: ap-south-1
+          role-to-assume: arn:aws:iam::167378055060:role/GitHubActionsAppDeployRole
+          role-session-name: GitHubActionsAppDeploySession
+
+      # 3. Log in to Amazon ECR
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 4. Build, Tag, and Push Telemetry Service Image
+      - name: Build & Push Telemetry Service Image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: telemetry-service-repo
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          RETRY_COUNT=0
+          MAX_RETRIES=5
+          until aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region ap-south-1 > /dev/null 2>&1; do
+            RETRY_COUNT=$((RETRY_COUNT+1))
+            if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+              echo "[ERROR] Timed out waiting for ECR Repository '$ECR_REPOSITORY'. Provision infrastructure with Terraform before deployment."
+              exit 1
+            fi
+            echo "[INFO] ECR Repository '$ECR_REPOSITORY' not found yet. Retrying in 10s ($RETRY_COUNT/$MAX_RETRIES)..."
+            sleep 10
+          done
+
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest Application/telemetry-processor
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      # 5. Build, Tag, and Push Processing Service Image
+      - name: Build & Push Processing Service Image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: processing-service-repo
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          RETRY_COUNT=0
+          MAX_RETRIES=5
+          until aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region ap-south-1 > /dev/null 2>&1; do
+            RETRY_COUNT=$((RETRY_COUNT+1))
+            if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+              echo "[ERROR] Timed out waiting for ECR Repository '$ECR_REPOSITORY'. Provision infrastructure with Terraform before deployment."
+              exit 1
+            fi
+            echo "[INFO] ECR Repository '$ECR_REPOSITORY' not found yet. Retrying in 10s ($RETRY_COUNT/$MAX_RETRIES)..."
+            sleep 10
+          done
+
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest Application/processing-engine
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      # 6. Build, Tag, and Push Alert Service Image
+      - name: Build & Push Alert Service Image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: alert-service-repo
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          RETRY_COUNT=0
+          MAX_RETRIES=5
+          until aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region ap-south-1 > /dev/null 2>&1; do
+            RETRY_COUNT=$((RETRY_COUNT+1))
+            if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+              echo "[ERROR] Timed out waiting for ECR Repository '$ECR_REPOSITORY'. Provision infrastructure with Terraform before deployment."
+              exit 1
+            fi
+            echo "[INFO] ECR Repository '$ECR_REPOSITORY' not found yet. Retrying in 10s ($RETRY_COUNT/$MAX_RETRIES)..."
+            sleep 10
+          done
+
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest Application/alert-handler
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      # 7. Execute Zero-Downtime ECS Fargate Service Updates
+      - name: Deploy to ECS Fargate
+        run: |
+          RETRY_COUNT=0
+          MAX_RETRIES=5
+          until aws ecs describe-clusters --clusters smart-helmet-cluster --region ap-south-1 --query "clusters[0].status" --output text 2>/dev/null | grep -q "ACTIVE"; do
+            RETRY_COUNT=$((RETRY_COUNT+1))
+            if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+              echo "[ERROR] Timed out waiting for ECS Cluster 'smart-helmet-cluster'. Provision infrastructure with Terraform before deployment."
+              exit 1
+            fi
+            echo "[INFO] ECS Cluster 'smart-helmet-cluster' not ACTIVE yet. Retrying in 10s ($RETRY_COUNT/$MAX_RETRIES)..."
+            sleep 10
+          done
+
+          aws ecs update-service --cluster smart-helmet-cluster --service smart-helmet-telemetry-service --force-new-deployment --region ap-south-1
+          aws ecs update-service --cluster smart-helmet-cluster --service smart-helmet-processing-service --force-new-deployment --region ap-south-1
+          aws ecs update-service --cluster smart-helmet-cluster --service smart-helmet-alerts-service --force-new-deployment --region ap-south-1

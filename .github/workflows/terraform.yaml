@@ -1,0 +1,64 @@
+name: Terraform Infrastructure Pipeline
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Infrastructure/**'
+  push:
+    branches: [main]
+    paths:
+      - 'Infrastructure/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  terraform:
+    name: "Terraform Plan & Apply"
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout repository code
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      # 2. Setup Terraform CLI
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      # 3. Assume IAM Role via OIDC
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-region: ap-south-1
+          role-to-assume: arn:aws:iam::167378055060:role/GitHubActionsInfraCheckRole
+          role-session-name: GitHubActionsInfraCheckSession
+
+      # 4. Check Terraform formatting
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+        working-directory: ./Infrastructure
+
+      # 5. Initialize Terraform Working Directory
+      - name: Terraform Init
+        run: terraform init -backend=false
+        working-directory: ./Infrastructure
+
+      # 6. Validate Terraform Configuration
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ./Infrastructure
+
+      # 7. Generate Terraform Plan (Runs on Pull Requests)
+      - name: Terraform Plan
+        if: github.event_name == 'pull_request'
+        run: terraform plan
+        working-directory: ./Infrastructure
+
+      # 8. Apply Infrastructure Changes (Runs on Push / Merge to main)
+      - name: Terraform Apply
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve
+        working-directory: ./Infrastructure
