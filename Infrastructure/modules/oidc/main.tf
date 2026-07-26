@@ -117,11 +117,12 @@ resource "aws_iam_role" "github_actions_terraform" {
 
 resource "aws_iam_policy" "terraform_policy" {
   name        = "${var.terraform_role_name}Policy"
-  description = "Read-Only policy for GitHub Actions Terraform PR validation and plan generation."
+  description = "Policy for GitHub Actions Terraform PR validation and plan generation."
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      # Read-only resource inspection permissions
       {
         Effect = "Allow"
         Action = [
@@ -140,6 +141,22 @@ resource "aws_iam_policy" "terraform_policy" {
           "iot:DescribeEndpoint"
         ]
         Resource = "*"
+      },
+      # Terraform S3 Remote State Bucket permissions (Scoped strictly to state bucket)
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket"
+        ]
+        Resource = "arn:aws:s3:::smarthelmet-terraform-state"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject"
+        ]
+        Resource = "arn:aws:s3:::smarthelmet-terraform-state/*"
       }
     ]
   })
