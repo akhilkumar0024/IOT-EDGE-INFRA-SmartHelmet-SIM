@@ -146,7 +146,8 @@ resource "aws_iam_policy" "terraform_policy" {
       {
         Effect = "Allow"
         Action = [
-          "s3:ListBucket"
+          "s3:ListBucket",
+          "s3:GetBucketLocation"
         ]
         Resource = "arn:aws:s3:::smarthelmet-terraform-state"
       },
