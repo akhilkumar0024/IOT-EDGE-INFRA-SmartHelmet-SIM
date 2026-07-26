@@ -38,12 +38,12 @@ jobs:
 
       # 4. Check Terraform formatting
       - name: Terraform Format Check
-        run: terraform fmt -check -recursive
+        run: terraform fmt -check -diff -recursive
         working-directory: ./Infrastructure
 
-      # 5. Initialize Terraform Working Directory
+      # 5. Initialize Terraform Working Directory (connects to S3 backend)
       - name: Terraform Init
-        run: terraform init -backend=false
+        run: terraform init -input=false
         working-directory: ./Infrastructure
 
       # 6. Validate Terraform Configuration
@@ -54,11 +54,11 @@ jobs:
       # 7. Generate Terraform Plan (Runs on Pull Requests)
       - name: Terraform Plan
         if: github.event_name == 'pull_request'
-        run: terraform plan
+        run: terraform plan -input=false
         working-directory: ./Infrastructure
 
       # 8. Apply Infrastructure Changes (Runs on Push / Merge to main)
       - name: Terraform Apply
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: terraform apply -auto-approve
+        run: terraform apply -input=false -auto-approve
         working-directory: ./Infrastructure
