@@ -142,7 +142,7 @@ resource "aws_iam_policy" "terraform_policy" {
         ]
         Resource = "*"
       },
-      # Terraform S3 Remote State Bucket permissions (Scoped strictly to state bucket)
+      # Terraform S3 Remote State Bucket permissions
       {
         Effect = "Allow"
         Action = [
