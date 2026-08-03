@@ -26,7 +26,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v6.2.3
         with:
           aws-region: ap-south-1
-          role-to-assume: arn:aws:iam::167378055060:role/GitHubActionsAppDeployRole
+          role-to-assume: arn:aws:iam::167378055060:role/smart-helmet-app-deploy-role
           role-session-name: GitHubActionsAppDeploySession
 
       # 3. Log in to Amazon ECR
@@ -38,7 +38,7 @@ jobs:
       - name: Build & Push Telemetry Service Image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: telemetry-service-repo
+          ECR_REPOSITORY: smart-helmet-telemetry-service-repo
           IMAGE_TAG: ${{ github.sha }}
         run: |
           RETRY_COUNT=0
@@ -61,7 +61,7 @@ jobs:
       - name: Build & Push Processing Service Image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: processing-service-repo
+          ECR_REPOSITORY: smart-helmet-processing-service-repo
           IMAGE_TAG: ${{ github.sha }}
         run: |
           RETRY_COUNT=0
@@ -84,7 +84,7 @@ jobs:
       - name: Build & Push Alert Service Image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: alert-service-repo
+          ECR_REPOSITORY: smart-helmet-alert-service-repo
           IMAGE_TAG: ${{ github.sha }}
         run: |
           RETRY_COUNT=0

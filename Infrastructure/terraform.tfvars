@@ -15,18 +15,14 @@ public-subnets-CIDR-AZ = {
   }
 }
 
-
-hot-storage-name        = "hot-storage"
-cold-storage-name       = "cold-storage"
-execution-registry-name = "execution-registry"
-
+hot-storage-name        = "smart-helmet-hot-storage"
+cold-storage-name       = "smart-helmet-cold-storage"
+execution-registry-name = "smart-helmet-execution-registry"
 
 ecr-repo-names = {
-  "telemetry-code-repo-name"  = "telemetry-service-repo"
-  "processing-code-repo-name" = "processing-service-repo"
-  "alert-code-repo-name"      = "alert-service-repo"
+  "telemetry-code-repo-name"  = "smart-helmet-telemetry-service-repo"
+  "processing-code-repo-name" = "smart-helmet-processing-service-repo"
+  "alert-code-repo-name"      = "smart-helmet-alert-service-repo"
 }
 
 sns-email-address = "akhilkumar0024.devops@gmail.com"
-
-

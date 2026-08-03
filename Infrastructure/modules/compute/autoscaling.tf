@@ -21,7 +21,7 @@ resource "aws_appautoscaling_policy" "telemetry_policy" {
     # We use a custom metric specification to track the SQS Queue length
     customized_metric_specification {
       metrics {
-        label = "Get the queue depth"
+        label = "Get the telemetry queue depth"
         id    = "m1"
         metric_stat {
           metric {

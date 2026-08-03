@@ -15,8 +15,10 @@ permissions:
   contents: read
 
 jobs:
-  terraform:
-    name: "Terraform Plan & Apply"
+  # JOB 1: Pull Request Plan Check (Runs on PRs using Read-Only Plan Role)
+  terraform_plan:
+    name: "Terraform PR Plan Check"
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
 
     steps:
@@ -29,12 +31,12 @@ jobs:
         uses: hashicorp/setup-terraform@v4
 
       # 3. Assume IAM Role via OIDC
-      - name: Configure AWS Credentials
+      - name: Configure AWS Credentials (PR Plan Role)
         uses: aws-actions/configure-aws-credentials@v6.2.3
         with:
           aws-region: ap-south-1
-          role-to-assume: arn:aws:iam::167378055060:role/GitHubActionsInfraCheckRole
-          role-session-name: GitHubActionsInfraCheckSession
+          role-to-assume: arn:aws:iam::167378055060:role/smart-helmet-tf-plan-role
+          role-session-name: GitHubActionsTerraformPlanSession
 
       # 4. Check Terraform formatting
       - name: Terraform Format Check
@@ -53,12 +55,41 @@ jobs:
 
       # 7. Generate Terraform Plan (Runs on Pull Requests)
       - name: Terraform Plan
-        if: github.event_name == 'pull_request'
         run: terraform plan -input=false
         working-directory: ./Infrastructure
 
-      # 8. Apply Infrastructure Changes (Runs on Push / Merge to main)
+  # JOB 2: Main Branch Provisioning Apply (Runs on Merge to main using Deploy Role)
+  terraform_apply:
+    name: "Terraform Main Branch Apply"
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Configure AWS Credentials (Main Deploy Role)
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-region: ap-south-1
+          role-to-assume: arn:aws:iam::167378055060:role/smart-helmet-tf-deploy-role
+          role-session-name: GitHubActionsTerraformDeploySession
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -diff -recursive
+        working-directory: ./Infrastructure
+
+      - name: Terraform Init
+        run: terraform init -input=false
+        working-directory: ./Infrastructure
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ./Infrastructure
+
       - name: Terraform Apply
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: terraform apply -input=false -auto-approve
         working-directory: ./Infrastructure

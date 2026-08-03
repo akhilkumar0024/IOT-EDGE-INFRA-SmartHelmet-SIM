@@ -123,10 +123,11 @@ module "monitoring" {
 }
 
 module "oidc" {
-  source              = "./modules/oidc"
-  github_repo         = "akhilkumar0024/IOT-EDGE-INFRA-SmartHelmet-SIM"
-  deploy_role_name    = "GitHubActionsAppDeployRole"
-  terraform_role_name = "GitHubActionsInfraCheckRole"
+  source           = "./modules/oidc"
+  github_repo      = "akhilkumar0024/IOT-EDGE-INFRA-SmartHelmet-SIM"
+  deploy_role_name = "smart-helmet-app-deploy-role"
+  plan_role_name   = "smart-helmet-tf-plan-role"
+  apply_role_name  = "smart-helmet-tf-deploy-role"
 }
 
 

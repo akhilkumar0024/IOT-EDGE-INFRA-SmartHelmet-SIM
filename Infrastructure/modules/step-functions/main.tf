@@ -1,6 +1,6 @@
 # 1. Emergency Alerts SNS Topic
 resource "aws_sns_topic" "smart-helmet-emergency-alerts" {
-  name = "emergency-alerts-topic"
+  name = "smart-helmet-emergency-alerts-topic"
 }
 
 # 2. IAM Role for the Step Functions

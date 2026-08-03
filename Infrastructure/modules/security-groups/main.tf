@@ -1,10 +1,10 @@
 resource "aws_security_group" "ecs-infra-sg" {
-  name        = "ECS-infra-SG"
-  description = "Allow to read data from the Telemtry Queue"
+  name        = "smart-helmet-ecs-infra-sg"
+  description = "Allow to read data from the Telemetry Queue"
   vpc_id      = var.vpc-id
 
   tags = {
-    Name = "ECS-infra-SG"
+    Name = "smart-helmet-ecs-infra-sg"
   }
 }
 

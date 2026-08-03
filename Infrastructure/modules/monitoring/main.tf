@@ -1,6 +1,6 @@
 #1. SNS Topic
 resource "aws_sns_topic" "smart-helmet-infra-alerts" {
-  name = "infra-monitoring-alerts-topic"
+  name = "smart-helmet-infra-monitoring-alerts-topic"
 }
 
 #2.SNS Subscription

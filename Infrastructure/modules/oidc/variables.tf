@@ -7,11 +7,17 @@ variable "github_repo" {
 variable "deploy_role_name" {
   description = "Name for the IAM Role assumed by Application Deployment pipeline"
   type        = string
-  default     = "GitHubActionsAppDeployRole"
+  default     = "smart-helmet-app-deploy-role"
 }
 
-variable "terraform_role_name" {
-  description = "Name for the IAM Role assumed by Terraform PR Checks pipeline"
+variable "plan_role_name" {
+  description = "Name for the IAM Role assumed by Terraform PR Checks pipeline (Dry-Run Plan)"
   type        = string
-  default     = "GitHubActionsInfraCheckRole"
+  default     = "smart-helmet-tf-plan-role"
+}
+
+variable "apply_role_name" {
+  description = "Name for the IAM Role assumed by Terraform Main Branch pipeline (Live Apply)"
+  type        = string
+  default     = "smart-helmet-tf-deploy-role"
 }
