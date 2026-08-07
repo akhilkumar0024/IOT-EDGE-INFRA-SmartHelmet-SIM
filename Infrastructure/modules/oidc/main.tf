@@ -75,7 +75,11 @@ resource "aws_iam_policy" "deploy_policy" {
           "ecs:DescribeTaskDefinition",
           "ecs:RegisterTaskDefinition"
         ]
-        Resource = "arn:aws:ecs:ap-south-1:167378055060:*"
+        Resource = [
+          "arn:aws:ecs:ap-south-1:167378055060:cluster/smart-helmet-*",
+          "arn:aws:ecs:ap-south-1:167378055060:service/smart-helmet-*/*",
+          "arn:aws:ecs:ap-south-1:167378055060:task-definition/smart-helmet-*:*"
+        ]
       }
     ]
   })
@@ -140,12 +144,15 @@ resource "aws_iam_policy" "tf_plan_policy" {
           "arn:aws:states:ap-south-1:167378055060:stateMachine:smart-helmet-*",
           "arn:aws:ec2:ap-south-1:167378055060:*",
           "arn:aws:ecr:ap-south-1:167378055060:repository/smart-helmet-*",
-          "arn:aws:ecs:ap-south-1:167378055060:*",
-          "arn:aws:logs:ap-south-1:167378055060:log-group:*",
+          "arn:aws:ecs:ap-south-1:167378055060:cluster/smart-helmet-*",
+          "arn:aws:ecs:ap-south-1:167378055060:service/smart-helmet-*/*",
+          "arn:aws:logs:ap-south-1:167378055060:log-group:/ecs/smart-helmet-*",
           "arn:aws:sns:ap-south-1:167378055060:smart-helmet-*",
           "arn:aws:ssm:ap-south-1:167378055060:parameter/smart-helmet/*",
           "arn:aws:iot:ap-south-1:167378055060:*",
-          "arn:aws:iam::167378055060:*"
+          "arn:aws:iam::167378055060:role/smart-helmet-*",
+          "arn:aws:iam::167378055060:policy/smart-helmet-*",
+          "arn:aws:iam::167378055060:oidc-provider/token.actions.githubusercontent.com"
         ]
       },
       {
@@ -221,12 +228,16 @@ resource "aws_iam_policy" "tf_deploy_policy" {
           "arn:aws:states:ap-south-1:167378055060:stateMachine:smart-helmet-*",
           "arn:aws:ec2:ap-south-1:167378055060:*",
           "arn:aws:ecr:ap-south-1:167378055060:repository/smart-helmet-*",
-          "arn:aws:ecs:ap-south-1:167378055060:*",
-          "arn:aws:logs:ap-south-1:167378055060:log-group:*",
+          "arn:aws:ecs:ap-south-1:167378055060:cluster/smart-helmet-*",
+          "arn:aws:ecs:ap-south-1:167378055060:service/smart-helmet-*/*",
+          "arn:aws:ecs:ap-south-1:167378055060:task-definition/smart-helmet-*:*",
+          "arn:aws:logs:ap-south-1:167378055060:log-group:/ecs/smart-helmet-*",
           "arn:aws:sns:ap-south-1:167378055060:smart-helmet-*",
           "arn:aws:ssm:ap-south-1:167378055060:parameter/smart-helmet/*",
           "arn:aws:iot:ap-south-1:167378055060:*",
-          "arn:aws:iam::167378055060:*"
+          "arn:aws:iam::167378055060:role/smart-helmet-*",
+          "arn:aws:iam::167378055060:policy/smart-helmet-*",
+          "arn:aws:iam::167378055060:oidc-provider/token.actions.githubusercontent.com"
         ]
       },
       {
@@ -239,7 +250,7 @@ resource "aws_iam_policy" "tf_deploy_policy" {
         Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
         Resource = "arn:aws:s3:::smarthelmet-terraform-state/*"
       },
-      # Prevent Privilege Escalation (Role cannot modify or delete its own policy)
+      # Prevent Privilege Escalation (Role cannot modify or delete ANY CI/CD pipeline role or policy)
       {
         Effect = "Deny"
         Action = [
@@ -251,7 +262,11 @@ resource "aws_iam_policy" "tf_deploy_policy" {
         ]
         Resource = [
           "arn:aws:iam::167378055060:role/smart-helmet-tf-deploy-role",
-          "arn:aws:iam::167378055060:policy/smart-helmet-tf-deploy-rolePolicy"
+          "arn:aws:iam::167378055060:policy/smart-helmet-tf-deploy-rolePolicy",
+          "arn:aws:iam::167378055060:role/smart-helmet-tf-plan-role",
+          "arn:aws:iam::167378055060:policy/smart-helmet-tf-plan-rolePolicy",
+          "arn:aws:iam::167378055060:role/smart-helmet-app-deploy-role",
+          "arn:aws:iam::167378055060:policy/smart-helmet-app-deploy-rolePolicy"
         ]
       }
     ]

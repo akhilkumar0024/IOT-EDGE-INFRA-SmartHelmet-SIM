@@ -1,9 +1,7 @@
-#1.Telemtry infra IAM Role
+# 1. Telemetry infra IAM Role
 resource "aws_iam_role" "Telemetry-Infra-Role" {
-  name = "Telemetry-Infra-Role"
+  name = "smart-helmet-telemetry-infra-role"
 
-  # Terraform's "jsonencode" function converts a
-  # Terraform expression result to valid JSON syntax.
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -19,13 +17,13 @@ resource "aws_iam_role" "Telemetry-Infra-Role" {
   })
 
   tags = {
-    Name = "Telemetry-Infra-Role"
+    Name = "smart-helmet-telemetry-infra-role"
   }
 }
 
-#1.Telemetry infra IAM Policy
+# 1. Telemetry infra IAM Policy
 resource "aws_iam_policy" "Telemetry-Infra-Role-Policy" {
-  name        = "Telemetry-Infra-Role-Policy"
+  name        = "smart-helmet-telemetry-infra-policy"
   description = "Policy for telemetry infra"
 
   policy = jsonencode({
@@ -75,15 +73,15 @@ resource "aws_iam_policy" "Telemetry-Infra-Role-Policy" {
   })
 }
 
-#1.Attach Telemetry infra role to policy
+# 1. Attach Telemetry infra role to policy
 resource "aws_iam_role_policy_attachment" "Telemetry-Infra-Role-Policy-Attachment" {
   role       = aws_iam_role.Telemetry-Infra-Role.name
   policy_arn = aws_iam_policy.Telemetry-Infra-Role-Policy.arn
 }
 
-#2.Processing Infra IAM Role
+# 2. Processing Infra IAM Role
 resource "aws_iam_role" "Processing-Infra-Role" {
-  name = "Processing-Infra-Role"
+  name = "smart-helmet-processing-infra-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -100,13 +98,13 @@ resource "aws_iam_role" "Processing-Infra-Role" {
   })
 
   tags = {
-    Name = "Processing-Infra-Role"
+    Name = "smart-helmet-processing-infra-role"
   }
 }
 
-#2.Processing Infra IAM Policy
+# 2. Processing Infra IAM Policy
 resource "aws_iam_policy" "Processing-Infra-Role-Policy" {
-  name        = "Processing-Infra-Role-Policy"
+  name        = "smart-helmet-processing-infra-policy"
   description = "Policy for processing infra"
 
   policy = jsonencode({
@@ -180,15 +178,15 @@ resource "aws_iam_policy" "Processing-Infra-Role-Policy" {
   })
 }
 
-#2.Attach Processing infra role to policy
+# 2. Attach Processing infra role to policy
 resource "aws_iam_role_policy_attachment" "Processing-Infra-Role-Policy-Attachment" {
   role       = aws_iam_role.Processing-Infra-Role.name
   policy_arn = aws_iam_policy.Processing-Infra-Role-Policy.arn
 }
 
-#3.Alert Infra IAM Role
+# 3. Alert Infra IAM Role
 resource "aws_iam_role" "Alert-Infra-Role" {
-  name = "Alert-Infra-Role"
+  name = "smart-helmet-alert-infra-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -205,13 +203,13 @@ resource "aws_iam_role" "Alert-Infra-Role" {
   })
 
   tags = {
-    Name = "Alert-Infra-Role"
+    Name = "smart-helmet-alert-infra-role"
   }
 }
 
-#3.Alert Infra IAM Policy
+# 3. Alert Infra IAM Policy
 resource "aws_iam_policy" "Alert-Infra-Role-Policy" {
-  name        = "Alert-Infra-Role-Policy"
+  name        = "smart-helmet-alert-infra-policy"
   description = "Policy for alert infra"
 
   policy = jsonencode({
@@ -272,16 +270,15 @@ resource "aws_iam_policy" "Alert-Infra-Role-Policy" {
   })
 }
 
-#3.Attach Processing infra role to policy
+# 3. Attach Alert infra role to policy
 resource "aws_iam_role_policy_attachment" "Alert-Infra-Role-Policy-Attachment" {
   role       = aws_iam_role.Alert-Infra-Role.name
   policy_arn = aws_iam_policy.Alert-Infra-Role-Policy.arn
 }
 
-#4.ECS Task role to allow pulling image from the ECR container
-#4.The Execution Role (Used by ECS to pull images and write logs)
+# 4. ECS Task Execution Role (Used by ECS to pull images and write logs)
 resource "aws_iam_role" "ECS-Execution-Role" {
-  name = "ECS-Execution-Role"
+  name = "smart-helmet-ecs-execution-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -297,9 +294,8 @@ resource "aws_iam_role" "ECS-Execution-Role" {
   })
 }
 
-#4.Attach the AWS Managed Policy for ECS Execution
+# 4. Attach the AWS Managed Policy for ECS Execution
 resource "aws_iam_role_policy_attachment" "ECS-Execution-Role-Policy-Attachment" {
   role       = aws_iam_role.ECS-Execution-Role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
-

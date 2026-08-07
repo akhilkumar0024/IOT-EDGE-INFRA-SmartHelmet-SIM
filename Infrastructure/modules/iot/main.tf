@@ -65,7 +65,7 @@ resource "aws_ssm_parameter" "iot_certificate_pem" {
 
 #5. IAM Role to allow IOT to forward messages to SQS Queues
 resource "aws_iam_role" "iot-sqs-access-role" {
-  name = "iot-sqs-access-role"
+  name = "smart-helmet-iot-sqs-access-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -82,7 +82,7 @@ resource "aws_iam_role" "iot-sqs-access-role" {
 
 #6. IAM Policy for the iot-sqs-role
 resource "aws_iam_policy" "iot-sqs-access-policy" {
-  name = "iot-sqs-access-policy"
+  name = "smart-helmet-iot-sqs-access-policy"
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [

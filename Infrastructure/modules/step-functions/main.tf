@@ -5,7 +5,7 @@ resource "aws_sns_topic" "smart-helmet-emergency-alerts" {
 
 # 2. IAM Role for the Step Functions
 resource "aws_iam_role" "state_machine_execution_role" {
-  name = "alert-infra-step-function-role"
+  name = "smart-helmet-step-function-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -22,7 +22,7 @@ resource "aws_iam_role" "state_machine_execution_role" {
 
 # 3. Policies Allowing Step Functions to access DynamoDB, SNS, and IoT Core
 resource "aws_iam_policy" "step-functions-policy" {
-  name = "alert-infra-step-functions-policy"
+  name = "smart-helmet-step-function-policy"
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
