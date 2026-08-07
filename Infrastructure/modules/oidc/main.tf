@@ -258,6 +258,7 @@ resource "aws_iam_policy" "tf_deploy_policy" {
           "arn:aws:iam::167378055060:policy/alert-infra-step-functions-policy",
           "arn:aws:iam::167378055060:oidc-provider/token.actions.githubusercontent.com",
           "arn:aws:cloudwatch:ap-south-1:167378055060:alarm:smart-helmet-*",
+          "arn:aws:cloudwatch:ap-south-1:167378055060:alarm:iot-core-*",
           "arn:aws:cloudwatch:ap-south-1:167378055060:alarm:TargetTracking-*",
           "arn:aws:application-autoscaling:ap-south-1:167378055060:scalable-target/*",
           "arn:aws:application-autoscaling:ap-south-1:167378055060:scaling-policy:*"

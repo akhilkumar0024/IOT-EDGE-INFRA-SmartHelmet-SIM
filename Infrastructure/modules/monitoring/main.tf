@@ -261,7 +261,7 @@ resource "aws_cloudwatch_log_group" "ecs_cluster_logs" {
 
 # 11. IOT Core Cloudwatch Logs
 resource "aws_cloudwatch_metric_alarm" "iot_core_throttling_alarm" {
-  alarm_name          = "iot-core-rule-throttling-alarm"
+  alarm_name          = "smart-helmet-iot-core-throttling-alarm"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   metric_name         = "RuleMessageThrottled"
