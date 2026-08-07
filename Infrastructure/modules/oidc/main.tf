@@ -78,7 +78,7 @@ resource "aws_iam_policy" "deploy_policy" {
         Resource = [
           "arn:aws:ecs:ap-south-1:167378055060:cluster/smart-helmet-*",
           "arn:aws:ecs:ap-south-1:167378055060:service/smart-helmet-*/*",
-          "arn:aws:ecs:ap-south-1:167378055060:task-definition/smart-helmet-*:*"
+          "arn:aws:ecs:ap-south-1:167378055060:task-definition/smart-helmet-*"
         ]
       }
     ]
@@ -131,7 +131,7 @@ resource "aws_iam_policy" "tf_plan_policy" {
           "states:DescribeStateMachine", "states:ListStateMachines",
           "ec2:Describe*",
           "ecr:DescribeRepositories", "ecr:ListTagsForResource",
-          "ecs:DescribeClusters", "ecs:DescribeServices",
+          "ecs:DescribeClusters", "ecs:DescribeServices", "ecs:DescribeTaskDefinition",
           "logs:DescribeLogGroups",
           "cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource",
           "application-autoscaling:Describe*",
@@ -236,7 +236,7 @@ resource "aws_iam_policy" "tf_deploy_policy" {
           "arn:aws:ecr:ap-south-1:167378055060:repository/smart-helmet-*",
           "arn:aws:ecs:ap-south-1:167378055060:cluster/smart-helmet-*",
           "arn:aws:ecs:ap-south-1:167378055060:service/smart-helmet-*/*",
-          "arn:aws:ecs:ap-south-1:167378055060:task-definition/smart-helmet-*:*",
+          "arn:aws:ecs:ap-south-1:167378055060:task-definition/smart-helmet-*",
           "arn:aws:logs:ap-south-1:167378055060:log-group:*",
           "arn:aws:sns:ap-south-1:167378055060:smart-helmet-*",
           "arn:aws:sns:ap-south-1:167378055060:emergency-alerts-topic",
