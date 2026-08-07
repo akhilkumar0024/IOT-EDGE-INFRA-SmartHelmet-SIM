@@ -73,13 +73,10 @@ resource "aws_iam_policy" "deploy_policy" {
           "ecs:DescribeServices",
           "ecs:DescribeClusters",
           "ecs:DescribeTaskDefinition",
-          "ecs:RegisterTaskDefinition"
+          "ecs:RegisterTaskDefinition",
+          "ecs:DeregisterTaskDefinition"
         ]
-        Resource = [
-          "arn:aws:ecs:ap-south-1:167378055060:cluster/smart-helmet-*",
-          "arn:aws:ecs:ap-south-1:167378055060:service/smart-helmet-*/*",
-          "arn:aws:ecs:ap-south-1:167378055060:task-definition/smart-helmet-*"
-        ]
+        Resource = "*"
       }
     ]
   })
@@ -194,7 +191,7 @@ resource "aws_iam_policy" "tf_deploy_policy" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      # Read-only Account/Service Metadata & Networking Inspection
+      # Read-only Account/Service Metadata & Global ECS Task Registration
       {
         Effect = "Allow"
         Action = [
@@ -205,7 +202,10 @@ resource "aws_iam_policy" "tf_deploy_policy" {
           "ssm:DescribeParameters",
           "iot:DescribeEndpoint",
           "iot:ListTopicRules",
-          "logs:DescribeLogGroups"
+          "logs:DescribeLogGroups",
+          "ecs:RegisterTaskDefinition",
+          "ecs:DeregisterTaskDefinition",
+          "ecs:DescribeTaskDefinition"
         ]
         Resource = "*"
       },
@@ -236,7 +236,7 @@ resource "aws_iam_policy" "tf_deploy_policy" {
           "arn:aws:ecr:ap-south-1:167378055060:repository/smart-helmet-*",
           "arn:aws:ecs:ap-south-1:167378055060:cluster/smart-helmet-*",
           "arn:aws:ecs:ap-south-1:167378055060:service/smart-helmet-*/*",
-          "arn:aws:ecs:ap-south-1:167378055060:task-definition/smart-helmet-*",
+          "arn:aws:ecs:ap-south-1:167378055060:task-definition/*",
           "arn:aws:logs:ap-south-1:167378055060:log-group:*",
           "arn:aws:sns:ap-south-1:167378055060:smart-helmet-*",
           "arn:aws:sns:ap-south-1:167378055060:emergency-alerts-topic",
