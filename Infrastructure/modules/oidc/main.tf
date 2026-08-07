@@ -133,27 +133,13 @@ resource "aws_iam_policy" "tf_plan_policy" {
           "ecr:DescribeRepositories", "ecr:ListTagsForResource",
           "ecs:DescribeClusters", "ecs:DescribeServices",
           "logs:DescribeLogGroups",
-          "iot:DescribeEndpoint", "iot:DescribeCertificate", "iot:GetPolicy",
+          "cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource",
+          "iot:DescribeEndpoint", "iot:DescribeCertificate", "iot:GetPolicy", "iot:ListTopicRules",
           "sns:GetTopicAttributes",
-          "ssm:GetParameter", "ssm:GetParameters",
+          "ssm:GetParameter", "ssm:GetParameters", "ssm:DescribeParameters",
           "iam:GetRole", "iam:GetPolicy", "iam:GetOpenIDConnectProvider"
         ]
-        Resource = [
-          "arn:aws:sqs:ap-south-1:167378055060:smart-helmet-*",
-          "arn:aws:dynamodb:ap-south-1:167378055060:table/smart-helmet-*",
-          "arn:aws:states:ap-south-1:167378055060:stateMachine:smart-helmet-*",
-          "arn:aws:ec2:ap-south-1:167378055060:*",
-          "arn:aws:ecr:ap-south-1:167378055060:repository/smart-helmet-*",
-          "arn:aws:ecs:ap-south-1:167378055060:cluster/smart-helmet-*",
-          "arn:aws:ecs:ap-south-1:167378055060:service/smart-helmet-*/*",
-          "arn:aws:logs:ap-south-1:167378055060:log-group:/ecs/smart-helmet-*",
-          "arn:aws:sns:ap-south-1:167378055060:smart-helmet-*",
-          "arn:aws:ssm:ap-south-1:167378055060:parameter/smart-helmet/*",
-          "arn:aws:iot:ap-south-1:167378055060:*",
-          "arn:aws:iam::167378055060:role/smart-helmet-*",
-          "arn:aws:iam::167378055060:policy/smart-helmet-*",
-          "arn:aws:iam::167378055060:oidc-provider/token.actions.githubusercontent.com"
-        ]
+        Resource = "*"
       },
       {
         Effect   = "Allow"
@@ -207,6 +193,24 @@ resource "aws_iam_policy" "tf_deploy_policy" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      # Read-only Account/Service Inspection
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeVpcs",
+          "ec2:DescribeSubnets",
+          "ec2:DescribeSecurityGroups",
+          "ec2:DescribeVpcAttribute",
+          "cloudwatch:DescribeAlarms",
+          "cloudwatch:ListTagsForResource",
+          "ssm:DescribeParameters",
+          "iot:DescribeEndpoint",
+          "iot:ListTopicRules",
+          "logs:DescribeLogGroups"
+        ]
+        Resource = "*"
+      },
+      # Resource Management Permissions scoped to project resources
       {
         Effect = "Allow"
         Action = [
@@ -220,24 +224,40 @@ resource "aws_iam_policy" "tf_deploy_policy" {
           "sns:*",
           "ssm:*",
           "iot:*",
-          "iam:*"
+          "iam:*",
+          "cloudwatch:*"
         ]
         Resource = [
           "arn:aws:sqs:ap-south-1:167378055060:smart-helmet-*",
           "arn:aws:dynamodb:ap-south-1:167378055060:table/smart-helmet-*",
+          "arn:aws:states:ap-south-1:167378055060:stateMachine:SmartHelmet*",
           "arn:aws:states:ap-south-1:167378055060:stateMachine:smart-helmet-*",
           "arn:aws:ec2:ap-south-1:167378055060:*",
           "arn:aws:ecr:ap-south-1:167378055060:repository/smart-helmet-*",
           "arn:aws:ecs:ap-south-1:167378055060:cluster/smart-helmet-*",
           "arn:aws:ecs:ap-south-1:167378055060:service/smart-helmet-*/*",
           "arn:aws:ecs:ap-south-1:167378055060:task-definition/smart-helmet-*:*",
-          "arn:aws:logs:ap-south-1:167378055060:log-group:/ecs/smart-helmet-*",
+          "arn:aws:logs:ap-south-1:167378055060:log-group:*",
           "arn:aws:sns:ap-south-1:167378055060:smart-helmet-*",
+          "arn:aws:sns:ap-south-1:167378055060:emergency-alerts-topic",
+          "arn:aws:sns:ap-south-1:167378055060:infra-monitoring-alerts-topic",
           "arn:aws:ssm:ap-south-1:167378055060:parameter/smart-helmet/*",
           "arn:aws:iot:ap-south-1:167378055060:*",
           "arn:aws:iam::167378055060:role/smart-helmet-*",
           "arn:aws:iam::167378055060:policy/smart-helmet-*",
-          "arn:aws:iam::167378055060:oidc-provider/token.actions.githubusercontent.com"
+          "arn:aws:iam::167378055060:role/Telemetry-Infra-Role",
+          "arn:aws:iam::167378055060:policy/Telemetry-Infra-Role-Policy",
+          "arn:aws:iam::167378055060:role/Processing-Infra-Role",
+          "arn:aws:iam::167378055060:policy/Processing-Infra-Role-Policy",
+          "arn:aws:iam::167378055060:role/Alert-Infra-Role",
+          "arn:aws:iam::167378055060:policy/Alert-Infra-Role-Policy",
+          "arn:aws:iam::167378055060:role/ECS-Execution-Role",
+          "arn:aws:iam::167378055060:role/iot-sqs-access-role",
+          "arn:aws:iam::167378055060:policy/iot-sqs-access-policy",
+          "arn:aws:iam::167378055060:role/alert-infra-step-function-role",
+          "arn:aws:iam::167378055060:policy/alert-infra-step-functions-policy",
+          "arn:aws:iam::167378055060:oidc-provider/token.actions.githubusercontent.com",
+          "arn:aws:cloudwatch:ap-south-1:167378055060:alarm:*"
         ]
       },
       {
