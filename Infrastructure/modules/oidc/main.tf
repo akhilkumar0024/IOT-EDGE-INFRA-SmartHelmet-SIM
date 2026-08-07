@@ -129,11 +129,12 @@ resource "aws_iam_policy" "tf_plan_policy" {
           "sqs:GetQueueAttributes", "sqs:ListQueues", "sqs:ListQueueTags",
           "dynamodb:DescribeTable", "dynamodb:ListTables", "dynamodb:DescribeContinuousBackups",
           "states:DescribeStateMachine", "states:ListStateMachines",
-          "ec2:DescribeVpcs", "ec2:DescribeSubnets", "ec2:DescribeSecurityGroups", "ec2:DescribeVpcAttribute",
+          "ec2:Describe*",
           "ecr:DescribeRepositories", "ecr:ListTagsForResource",
           "ecs:DescribeClusters", "ecs:DescribeServices",
           "logs:DescribeLogGroups",
           "cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource",
+          "application-autoscaling:Describe*",
           "iot:DescribeEndpoint", "iot:DescribeCertificate", "iot:GetPolicy", "iot:ListTopicRules",
           "sns:GetTopicAttributes",
           "ssm:GetParameter", "ssm:GetParameters", "ssm:DescribeParameters",
@@ -193,16 +194,14 @@ resource "aws_iam_policy" "tf_deploy_policy" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      # Read-only Account/Service Inspection
+      # Read-only Account/Service Metadata & Networking Inspection
       {
         Effect = "Allow"
         Action = [
-          "ec2:DescribeVpcs",
-          "ec2:DescribeSubnets",
-          "ec2:DescribeSecurityGroups",
-          "ec2:DescribeVpcAttribute",
+          "ec2:Describe*",
           "cloudwatch:DescribeAlarms",
           "cloudwatch:ListTagsForResource",
+          "application-autoscaling:Describe*",
           "ssm:DescribeParameters",
           "iot:DescribeEndpoint",
           "iot:ListTopicRules",
@@ -225,7 +224,8 @@ resource "aws_iam_policy" "tf_deploy_policy" {
           "ssm:*",
           "iot:*",
           "iam:*",
-          "cloudwatch:*"
+          "cloudwatch:*",
+          "application-autoscaling:*"
         ]
         Resource = [
           "arn:aws:sqs:ap-south-1:167378055060:smart-helmet-*",
@@ -257,7 +257,10 @@ resource "aws_iam_policy" "tf_deploy_policy" {
           "arn:aws:iam::167378055060:role/alert-infra-step-function-role",
           "arn:aws:iam::167378055060:policy/alert-infra-step-functions-policy",
           "arn:aws:iam::167378055060:oidc-provider/token.actions.githubusercontent.com",
-          "arn:aws:cloudwatch:ap-south-1:167378055060:alarm:*"
+          "arn:aws:cloudwatch:ap-south-1:167378055060:alarm:smart-helmet-*",
+          "arn:aws:cloudwatch:ap-south-1:167378055060:alarm:TargetTracking-*",
+          "arn:aws:application-autoscaling:ap-south-1:167378055060:scalable-target/*",
+          "arn:aws:application-autoscaling:ap-south-1:167378055060:scaling-policy:*"
         ]
       },
       {
