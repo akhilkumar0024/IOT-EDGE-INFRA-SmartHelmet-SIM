@@ -1,0 +1,155 @@
+name: Microservices Infrastructure Pipeline
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'services/**/infra/**'
+  push:
+    branches: [main]
+    paths:
+      - 'services/**/infra/**'
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Select which microservice infra to deploy"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - telemetry-processor
+          - processing-engine
+          - alert-handler
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # STEP 1: Detect which microservice infra folder changed
+  detect-changes:
+    name: "Detect Changed Service Infra"
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.filter.outputs.changes }}
+      run_all: ${{ github.event.inputs.service == 'all' }}
+      manual_service: ${{ github.event.inputs.service }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Filter Changed Paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            telemetry-processor: 'services/telemetry-processor/infra/**'
+            processing-engine: 'services/processing-engine/infra/**'
+            alert-handler: 'services/alert-handler/infra/**'
+
+  # STEP 2: Terraform Plan on Pull Request
+  plan:
+    name: "Terraform Plan"
+    needs: detect-changes
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [telemetry-processor, processing-engine, alert-handler]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check If Service Changed
+        id: check
+        run: |
+          if echo '${{ needs.detect-changes.outputs.services }}' | grep -q '${{ matrix.service }}'; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout Code
+        if: steps.check.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        if: steps.check.outputs.should_run == 'true'
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS Credentials (Plan Role)
+        if: steps.check.outputs.should_run == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ap-south-1
+          role-to-assume: arn:aws:iam::167378055060:role/smart-helmet-tf-plan-role
+          role-session-name: GHActionsServiceInfraPlan
+
+      - name: Terraform Format Check
+        if: steps.check.outputs.should_run == 'true'
+        run: terraform fmt -check -diff
+        working-directory: services/${{ matrix.service }}/infra
+
+      - name: Terraform Init
+        if: steps.check.outputs.should_run == 'true'
+        run: terraform init -input=false
+        working-directory: services/${{ matrix.service }}/infra
+
+      - name: Terraform Validate
+        if: steps.check.outputs.should_run == 'true'
+        run: terraform validate
+        working-directory: services/${{ matrix.service }}/infra
+
+      - name: Terraform Plan
+        if: steps.check.outputs.should_run == 'true'
+        run: terraform plan -input=false
+        working-directory: services/${{ matrix.service }}/infra
+
+  # STEP 3: Terraform Apply on Merge to Main or Workflow Dispatch
+  apply:
+    name: "Terraform Apply"
+    needs: detect-changes
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [telemetry-processor, processing-engine, alert-handler]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check If Service Should Apply
+        id: check
+        run: |
+          IS_CHANGED=$(echo '${{ needs.detect-changes.outputs.services }}' | grep -q '${{ matrix.service }}' && echo "true" || echo "false")
+          IS_MANUAL_ALL="${{ needs.detect-changes.outputs.run_all }}"
+          MANUAL_SVC="${{ needs.detect-changes.outputs.manual_service }}"
+
+          if [ "$IS_CHANGED" = "true" ] || [ "$IS_MANUAL_ALL" = "true" ] || [ "$MANUAL_SVC" = "${{ matrix.service }}" ]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout Code
+        if: steps.check.outputs.should_run == 'true'
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        if: steps.check.outputs.should_run == 'true'
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS Credentials (Deploy Role)
+        if: steps.check.outputs.should_run == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ap-south-1
+          role-to-assume: arn:aws:iam::167378055060:role/smart-helmet-tf-deploy-role
+          role-session-name: GHActionsServiceInfraApply
+
+      - name: Terraform Init
+        if: steps.check.outputs.should_run == 'true'
+        run: terraform init -input=false
+        working-directory: services/${{ matrix.service }}/infra
+
+      - name: Terraform Apply
+        if: steps.check.outputs.should_run == 'true'
+        run: terraform apply -input=false -auto-approve
+        working-directory: services/${{ matrix.service }}/infra

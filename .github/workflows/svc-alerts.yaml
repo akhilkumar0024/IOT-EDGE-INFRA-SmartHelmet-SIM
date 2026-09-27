@@ -1,0 +1,67 @@
+name: Deploy Alert Handler Service
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/alert-handler/**'
+      - '!services/alert-handler/infra/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: "Build & Deploy Alert Handler"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ap-south-1
+          role-to-assume: arn:aws:iam::167378055060:role/smart-helmet-app-deploy-role
+          role-session-name: GHActionsAlertDeploy
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, Tag, and Push Docker Image
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: smart-helmet-alert-service-repo
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest services/alert-handler
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Download Active Task Definition from AWS
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition smart-helmet-alerts-task \
+            --query taskDefinition > task-definition.json
+
+      - name: Render New Image Tag
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: alerts-container
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Deploy to Amazon ECS Fargate
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+          service: smart-helmet-alerts-service
+          cluster: smart-helmet-cluster
+          wait-for-service-stability: true

@@ -1,0 +1,77 @@
+name: Platform Infrastructure Pipeline
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'infra/platform/**'
+  push:
+    branches: [main]
+    paths:
+      - 'infra/platform/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  plan:
+    name: "Terraform Plan (Platform)"
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS Credentials (Plan Role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ap-south-1
+          role-to-assume: arn:aws:iam::167378055060:role/smart-helmet-tf-plan-role
+          role-session-name: GHActionsPlatformPlan
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -diff
+        working-directory: ./infra/platform
+
+      - name: Terraform Init
+        run: terraform init -input=false
+        working-directory: ./infra/platform
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ./infra/platform
+
+      - name: Terraform Plan
+        run: terraform plan -input=false
+        working-directory: ./infra/platform
+
+  apply:
+    name: "Terraform Apply (Platform)"
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS Credentials (Deploy Role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ap-south-1
+          role-to-assume: arn:aws:iam::167378055060:role/smart-helmet-tf-deploy-role
+          role-session-name: GHActionsPlatformApply
+
+      - name: Terraform Init
+        run: terraform init -input=false
+        working-directory: ./infra/platform
+
+      - name: Terraform Apply
+        run: terraform apply -input=false -auto-approve
+        working-directory: ./infra/platform

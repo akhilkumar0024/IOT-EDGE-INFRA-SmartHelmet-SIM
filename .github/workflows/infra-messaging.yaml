@@ -1,0 +1,77 @@
+name: Messaging Infrastructure Pipeline
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'infra/messaging/**'
+  push:
+    branches: [main]
+    paths:
+      - 'infra/messaging/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  plan:
+    name: "Terraform Plan (Messaging)"
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS Credentials (Plan Role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ap-south-1
+          role-to-assume: arn:aws:iam::167378055060:role/smart-helmet-tf-plan-role
+          role-session-name: GHActionsMessagingPlan
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -diff
+        working-directory: ./infra/messaging
+
+      - name: Terraform Init
+        run: terraform init -input=false
+        working-directory: ./infra/messaging
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ./infra/messaging
+
+      - name: Terraform Plan
+        run: terraform plan -input=false
+        working-directory: ./infra/messaging
+
+  apply:
+    name: "Terraform Apply (Messaging)"
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS Credentials (Deploy Role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ap-south-1
+          role-to-assume: arn:aws:iam::167378055060:role/smart-helmet-tf-deploy-role
+          role-session-name: GHActionsMessagingApply
+
+      - name: Terraform Init
+        run: terraform init -input=false
+        working-directory: ./infra/messaging
+
+      - name: Terraform Apply
+        run: terraform apply -input=false -auto-approve
+        working-directory: ./infra/messaging
