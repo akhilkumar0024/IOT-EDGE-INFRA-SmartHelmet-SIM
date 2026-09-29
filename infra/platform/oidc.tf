@@ -214,7 +214,9 @@ resource "aws_iam_policy" "tf_deploy_policy" {
           "logs:DescribeLogGroups",
           "ecs:RegisterTaskDefinition",
           "ecs:DeregisterTaskDefinition",
-          "ecs:DescribeTaskDefinition"
+          "ecs:DescribeTaskDefinition",
+          "iam:GetOpenIDConnectProvider",
+          "iam:ListOpenIDConnectProviders"
         ]
         Resource = "*"
       },
@@ -238,6 +240,7 @@ resource "aws_iam_policy" "tf_deploy_policy" {
         Resource = [
           "arn:aws:sqs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:smart-helmet-*",
           "arn:aws:dynamodb:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:table/smart-helmet-*",
+          "arn:aws:dynamodb:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:table/terraform-state-lock",
           "arn:aws:states:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:stateMachine:SmartHelmet*",
           "arn:aws:states:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:stateMachine:smart-helmet-*",
           "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:*",
@@ -251,6 +254,7 @@ resource "aws_iam_policy" "tf_deploy_policy" {
           "arn:aws:iot:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:*",
           "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/smart-helmet-*",
           "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/smart-helmet-*",
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/*",
           "arn:aws:cloudwatch:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:alarm:smart-helmet-*",
           "arn:aws:cloudwatch:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:alarm:iot-core-*",
           "arn:aws:cloudwatch:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:alarm:TargetTracking-*",
