@@ -25,14 +25,14 @@ locals {
     "override"  = data.aws_ssm_parameter.override_dlq_name.value
   }
 
-  queue_names = [
-    data.aws_ssm_parameter.telemetry_queue_name.value,
-    data.aws_ssm_parameter.control_queue_name.value,
-    data.aws_ssm_parameter.lwt_queue_name.value,
-    data.aws_ssm_parameter.crash_queue_name.value,
-    data.aws_ssm_parameter.alert_queue_name.value,
-    data.aws_ssm_parameter.override_queue_name.value
-  ]
+  queue_map = {
+    "telemetry" = data.aws_ssm_parameter.telemetry_queue_name.value
+    "control"   = data.aws_ssm_parameter.control_queue_name.value
+    "lwt"       = data.aws_ssm_parameter.lwt_queue_name.value
+    "crash"     = data.aws_ssm_parameter.crash_queue_name.value
+    "alert"     = data.aws_ssm_parameter.alert_queue_name.value
+    "override"  = data.aws_ssm_parameter.override_queue_name.value
+  }
 }
 
 resource "aws_cloudwatch_metric_alarm" "dlq_alarms" {
@@ -165,7 +165,7 @@ resource "aws_cloudwatch_metric_alarm" "step_function_failures_alarm" {
 
 # 7. SQS Oldest Message Age Alarms
 resource "aws_cloudwatch_metric_alarm" "sqs_old_message_alarm" {
-  for_each            = toset(local.queue_names)
+  for_each            = local.queue_map
   alarm_name          = "smart-helmet-sqs-${each.key}-old-message-alarm"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
@@ -178,7 +178,7 @@ resource "aws_cloudwatch_metric_alarm" "sqs_old_message_alarm" {
   alarm_actions       = [aws_sns_topic.infra_alerts.arn]
 
   dimensions = {
-    QueueName = each.key
+    QueueName = each.value
   }
 }
 
