@@ -1,18 +1,21 @@
-import os
 import json
-import time
 import logging
-import boto3
+import os
 import signal
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import time
 from decimal import Decimal
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import boto3
+from botocore.exceptions import ClientError
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 ALERT_QUEUE_URL = os.getenv('ALERT_QUEUE_URL')
 OVERRIDE_QUEUE_URL = os.getenv('OVERRIDE_QUEUE_URL')
 EXECUTION_REGISTRY_NAME = os.getenv('EXECUTION_REGISTRY_NAME')
+COLD_STORAGE_NAME = os.getenv('COLD_STORAGE_NAME')
 STEP_FUNCTION_ARN = os.getenv('STEP_FUNCTION_ARN')
 RECONCILIATION_STEP_FUNCTION_ARN = os.getenv('RECONCILIATION_STEP_FUNCTION_ARN')
 IOT_ENDPOINT_URL = os.getenv('IOT_ENDPOINT_URL')
@@ -21,263 +24,267 @@ AWS_REGION = os.getenv('AWS_REGION', 'ap-south-1')
 sqs = boto3.client('sqs', region_name=AWS_REGION)
 dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
 sfn = boto3.client('stepfunctions', region_name=AWS_REGION)
+ssm = boto3.client('ssm', region_name=AWS_REGION)
+iot_data = boto3.client(
+    'iot-data',
+    region_name=AWS_REGION,
+    **({'endpoint_url': f'https://{IOT_ENDPOINT_URL}'} if IOT_ENDPOINT_URL else {})
+)
 
-if IOT_ENDPOINT_URL:
-    iot_data = boto3.client('iot-data', region_name=AWS_REGION, endpoint_url=f"https://{IOT_ENDPOINT_URL}")
-else:
-    iot_data = boto3.client('iot-data', region_name=AWS_REGION)
 
-def publish_to_helmet(helmet_id, action, message):
-    try:
-        topic = f"helmet/{helmet_id}/alert/status"
-        payload = {
-            "action": action,
-            "message": message,
-            "timestamp": int(time.time())
-        }
-        iot_data.publish(
-            topic=topic,
-            qos=1,
-            payload=json.dumps(payload)
-        )
-        logging.info(f"Published {action} to {topic}")
-    except Exception as e:
-        logging.error(f"Failed to publish to IoT Core: {str(e)}")
+def publish_to_helmet(helmet_id, action, message, incident_id=None, incident_timestamp=None):
+    payload = {
+        'action': action,
+        'message': message,
+        'timestamp': int(time.time()),
+        'incident_id': incident_id,
+        'incident_timestamp': incident_timestamp,
+    }
+    iot_data.publish(
+        topic=f'helmet/{helmet_id}/alert/status',
+        qos=1,
+        payload=json.dumps(payload),
+    )
+
 
 def get_ssm_parameter(name, default_value):
     try:
-        ssm = boto3.client('ssm', region_name=AWS_REGION)
-        response = ssm.get_parameter(Name=name)
-        return int(response['Parameter']['Value'])
-    except Exception as e:
-        logging.warning(f"Failed to fetch {name} from SSM, using default {default_value}: {str(e)}")
+        return int(ssm.get_parameter(Name=name)['Parameter']['Value'])
+    except ClientError as error:
+        logging.warning('Using default for %s: %s', name, error)
         return default_value
 
-def handle_alert(msg):
-    body = json.loads(msg['Body'])
-    helmet_id = body.get('helmet_id')
-    timestamp = body.get('timestamp')
-    alert_type = body.get('alert_type')
 
-    if not helmet_id:
-        return
+def is_conditional_failure(error):
+    return error.response['Error']['Code'] == 'ConditionalCheckFailedException'
 
-    # Fetch configuration from SSM Parameter Store
+
+def get_countdown(alert_type):
     if alert_type == 'FP_CD':
-        status = 'FP_CD'
-        wait_seconds = get_ssm_parameter("/smart-helmet/config/false_positive_window_seconds", 5)
-        message = f"False positive detected. Countdown: {wait_seconds}s"
-    elif alert_type == 'retrospective':
-        status = 'STD_CD'
-        wait_seconds = get_ssm_parameter("/smart-helmet/config/retrospective_alert_window_seconds", 300)
-        message = f"Retrospective crash detected. Countdown: {wait_seconds}s"
-    elif alert_type == 'STD_CD':
-        status = 'STD_CD'
-        wait_seconds = get_ssm_parameter("/smart-helmet/config/standard_alert_window_seconds", 30)
-        message = f"Crash detected. Countdown: {wait_seconds}s"
-    else:
-        status = 'STD_CD'
-        wait_seconds = get_ssm_parameter("/smart-helmet/config/standard_alert_window_seconds", 30)
-        message = f"Crash detected. Countdown: {wait_seconds}s"
+        return get_ssm_parameter('/smart-helmet/config/false_positive_window_seconds', 5), 'False positive detected.'
+    if alert_type == 'retrospective':
+        return get_ssm_parameter('/smart-helmet/config/retrospective_alert_window_seconds', 300), 'Retrospective crash detected.'
+    return get_ssm_parameter('/smart-helmet/config/standard_alert_window_seconds', 30), 'Crash detected.'
 
-    table = dynamodb.Table(EXECUTION_REGISTRY_NAME)
+
+def start_incident(helmet_id, incident_id, incident_timestamp, alert_type):
+    registry = dynamodb.Table(EXECUTION_REGISTRY_NAME)
+    wait_seconds, message = get_countdown(alert_type)
+    deadline = int(time.time()) + wait_seconds
+    item = {
+        'helmetId': helmet_id,
+        'incidentId': incident_id,
+        'status': 'INITIALIZING',
+        'alertType': alert_type,
+        'incidentTimestamp': Decimal(str(incident_timestamp)),
+        'serverDeadline': deadline,
+        'TimeToExist': deadline + 86400,
+    }
 
     try:
-        execution_input = {
-            "helmet_id": helmet_id,
-            "timestamp": timestamp,
-            "wait_seconds": wait_seconds
-        }
-        response = sfn.start_execution(
+        registry.put_item(
+            Item=item,
+            ConditionExpression='attribute_not_exists(helmetId) AND attribute_not_exists(incidentId)',
+        )
+    except ClientError as error:
+        if not is_conditional_failure(error):
+            raise
+        existing = registry.get_item(Key={'helmetId': helmet_id, 'incidentId': incident_id}).get('Item')
+        if existing and existing.get('status') in {'COUNTDOWN_ACTIVE', 'CANCELLED', 'CONFIRMED', 'RESOLVED'}:
+            return True
+        if not existing or existing.get('status') != 'INITIALIZING':
+            raise
+
+    execution_input = {
+        'helmet_id': helmet_id,
+        'incident_id': incident_id,
+        'incident_timestamp': float(incident_timestamp),
+        'wait_seconds': wait_seconds,
+    }
+    try:
+        execution = sfn.start_execution(
             stateMachineArn=STEP_FUNCTION_ARN,
-            input=json.dumps(execution_input)
+            name=incident_id,
+            input=json.dumps(execution_input),
         )
-        execution_arn = response['executionArn']
-        
-        # Write ARN and status to Execution Registry DynamoDB Table
-        table.put_item(
-            Item={
-                'helmetId': helmet_id,
-                'ExecutionArn': execution_arn,
-                'status': status,
-                'timestamp': Decimal(str(timestamp)),
-                'TimeToExist': int(time.time()) + (wait_seconds + 60)
-            }
-        )
-        logging.info(f"Started Step Function {execution_arn} with status {status} for {helmet_id}")
+    except sfn.exceptions.ExecutionAlreadyExists:
+        logging.info('Execution already exists for incident %s', incident_id)
+        return True
 
-        publish_to_helmet(helmet_id, "START_COUNTDOWN", message)
+    registry.update_item(
+        Key={'helmetId': helmet_id, 'incidentId': incident_id},
+        UpdateExpression='SET #status = :active, executionArn = :execution_arn',
+        ConditionExpression='#status = :initializing',
+        ExpressionAttributeNames={'#status': 'status'},
+        ExpressionAttributeValues={
+            ':active': 'COUNTDOWN_ACTIVE',
+            ':initializing': 'INITIALIZING',
+            ':execution_arn': execution['executionArn'],
+        },
+    )
+    publish_to_helmet(
+        helmet_id,
+        'START_COUNTDOWN',
+        f'{message} Countdown: {wait_seconds}s',
+        incident_id,
+        float(incident_timestamp),
+    )
+    return True
 
-    except Exception as e:
-        logging.error(f"Failed to start step function: {str(e)}")
 
-def handle_override(msg):
-    body = json.loads(msg['Body'])
+def handle_alert(message):
+    body = json.loads(message['Body'])
     helmet_id = body.get('helmet_id')
-    action = body.get('action')
-    timestamp = body.get('timestamp', int(time.time()))
-    
-    if not helmet_id:
-        return
+    incident_id = body.get('incident_id')
+    incident_timestamp = body.get('timestamp')
+    if not helmet_id or not incident_id or incident_timestamp is None:
+        logging.warning('Malformed alert message: %s', body)
+        return True
+    return start_incident(helmet_id, incident_id, incident_timestamp, body.get('alert_type', 'STD_CD'))
 
-    table = dynamodb.Table(EXECUTION_REGISTRY_NAME)
-    try:
-        # Scenario 2A: False Positive Override
-        if action == 'FP_OVERRIDE':
-            logging.info(f"Rider override FP_OVERRIDE received for {helmet_id}. Triggering standard countdown.")
-            
-            standard_wait = get_ssm_parameter("/smart-helmet/config/standard_alert_window_seconds", 30)
-            execution_input = {
-                "helmet_id": helmet_id,
-                "timestamp": timestamp,
-                "wait_seconds": standard_wait
-            }
-            response = sfn.start_execution(
-                stateMachineArn=STEP_FUNCTION_ARN,
-                input=json.dumps(execution_input)
-            )
-            execution_arn = response['executionArn']
-            
-            table.put_item(
-                Item={
-                    'helmetId': helmet_id,
-                    'ExecutionArn': execution_arn,
-                    'status': 'STD_CD',
-                    'timestamp': Decimal(str(timestamp)),
-                    'TimeToExist': int(time.time()) + (standard_wait + 60)
-                }
-            )
-            
-            message = f"Crash warning active. Countdown: {standard_wait}s"
-            publish_to_helmet(helmet_id, "START_COUNTDOWN", message)
 
-        # Scenario 1A/1B: Cancellation
-        elif action in ['cancel', 'CANCEL']:
-            response = table.get_item(Key={'helmetId': helmet_id})
-            item = response.get('Item')
-            
-            if item:
-                # Scenario 1A: Active countdown exists
-                execution_arn = item['ExecutionArn']
-                logging.info(f"Rider cancel received during active countdown for {helmet_id}. Updating registry status to CANCEL.")
-                
-                table.put_item(
-                    Item={
-                        'helmetId': helmet_id,
-                        'ExecutionArn': execution_arn,
-                        'status': 'CANCEL',
-                        'timestamp': item.get('timestamp', Decimal(str(timestamp))),
-                        'TimeToExist': int(time.time()) + 60
-                    }
-                )
-                publish_to_helmet(helmet_id, "DISMISS", "Alert cancelled successfully.")
-            
-            else:
-                # Scenario 1B: Late Cancel (registry row missing)
-                logging.warning(f"Rider cancel received but registry row is missing for {helmet_id}. Starting SFN2 reconciliation.")
-                
-                ts1 = float(timestamp)
-                ts2 = float(body.get('timestamp', time.time()))
-                t_now = time.time()
-                is_reconcilable = (ts2 - ts1 < 30) and (t_now - ts1 < 300)
-                
-                reconcile_input = {
-                    "helmet_id": helmet_id,
-                    "timestamp": timestamp,
-                    "is_reconcilable": is_reconcilable
-                }
-                
-                rec_response = sfn.start_execution(
-                    stateMachineArn=RECONCILIATION_STEP_FUNCTION_ARN,
-                    input=json.dumps(reconcile_input)
-                )
-                rec_execution_arn = rec_response['executionArn']
-                
-                table.put_item(
-                    Item={
-                        'helmetId': helmet_id,
-                        'ExecutionArn': rec_execution_arn,
-                        'status': 'CANCEL',
-                        'timestamp': Decimal(str(timestamp)),
-                        'TimeToExist': int(time.time()) + 60
-                    }
-                )
-                publish_to_helmet(helmet_id, "DISMISS", "Stand-down initiated.")
+def handle_cancel(helmet_id, incident_id, incident_timestamp):
+    if not incident_id or incident_timestamp is None:
+        logging.warning('Cancellation requires incident_id and incident_timestamp for %s', helmet_id)
+        return True
 
-    except Exception as e:
-        logging.error(f"Failed to process override for {helmet_id}: {str(e)}")
-
-def process_messages():
-    if not ALERT_QUEUE_URL or not OVERRIDE_QUEUE_URL or not STEP_FUNCTION_ARN or not EXECUTION_REGISTRY_NAME or not RECONCILIATION_STEP_FUNCTION_ARN:
-        logging.error("Missing required environment variables.")
-        return
-
-    global last_poll_time
-    while not is_shutting_down:
+    registry = dynamodb.Table(EXECUTION_REGISTRY_NAME)
+    now = int(time.time())
+    active = registry.get_item(Key={'helmetId': helmet_id, 'incidentId': incident_id}).get('Item')
+    if active and active.get('status') == 'COUNTDOWN_ACTIVE' and now <= int(active['serverDeadline']):
         try:
-            last_poll_time = time.time()
-            
-            # Poll Alert Queue
-            alert_res = sqs.receive_message(QueueUrl=ALERT_QUEUE_URL, MaxNumberOfMessages=5, WaitTimeSeconds=2)
-            for msg in alert_res.get('Messages', []):
-                logging.info(f"Received ALERT message: {msg['Body']}")
-                handle_alert(msg)
-                sqs.delete_message(QueueUrl=ALERT_QUEUE_URL, ReceiptHandle=msg['ReceiptHandle'])
+            registry.update_item(
+                Key={'helmetId': helmet_id, 'incidentId': incident_id},
+                UpdateExpression='SET #status = :cancelled',
+                ConditionExpression='#status = :active AND serverDeadline >= :now',
+                ExpressionAttributeNames={'#status': 'status'},
+                ExpressionAttributeValues={
+                    ':cancelled': 'CANCELLED',
+                    ':active': 'COUNTDOWN_ACTIVE',
+                    ':now': now,
+                },
+            )
+            publish_to_helmet(helmet_id, 'DISMISS', 'Alert cancelled successfully.', incident_id, incident_timestamp)
+            return True
+        except ClientError as error:
+            if not is_conditional_failure(error):
+                raise
 
-            # Poll Override Queue
-            override_res = sqs.receive_message(QueueUrl=OVERRIDE_QUEUE_URL, MaxNumberOfMessages=5, WaitTimeSeconds=2)
-            for msg in override_res.get('Messages', []):
-                logging.info(f"Received OVERRIDE message: {msg['Body']}")
-                handle_override(msg)
-                sqs.delete_message(QueueUrl=OVERRIDE_QUEUE_URL, ReceiptHandle=msg['ReceiptHandle'])
+    cold_storage = dynamodb.Table(COLD_STORAGE_NAME)
+    incident = cold_storage.get_item(
+        Key={'helmetId': helmet_id, 'timestamp': Decimal(str(incident_timestamp))}
+    ).get('Item')
+    if not incident or incident.get('incidentId') != incident_id:
+        logging.warning('No matching confirmed incident for late cancellation: %s', incident_id)
+        return True
 
-        except Exception as e:
-            logging.error(f"Error in polling loop: {str(e)}")
-            time.sleep(5)
-            
-    logging.info("Graceful shutdown complete. Exiting.")
+    reconciliation_input = {
+        'helmet_id': helmet_id,
+        'incident_id': incident_id,
+        'incident_timestamp': float(incident_timestamp),
+        'is_reconcilable': 0 <= now - float(incident_timestamp) <= 300,
+    }
+    try:
+        sfn.start_execution(
+            stateMachineArn=RECONCILIATION_STEP_FUNCTION_ARN,
+            name=f'reconcile-{incident_id}',
+            input=json.dumps(reconciliation_input),
+        )
+    except sfn.exceptions.ExecutionAlreadyExists:
+        logging.info('Reconciliation already exists for %s', incident_id)
+    return True
 
-# --- Graceful Shutdown ---
+
+def handle_override(message):
+    body = json.loads(message['Body'])
+    helmet_id = body.get('helmet_id')
+    incident_id = body.get('incident_id')
+    if not helmet_id:
+        logging.warning('Malformed override message: %s', body)
+        return True
+    action = body.get('action', '').upper()
+    if action == 'CANCEL':
+        return handle_cancel(helmet_id, incident_id, body.get('incident_timestamp'))
+    if action == 'FP_OVERRIDE':
+        if not incident_id:
+            logging.warning('False-positive override requires incident_id for %s', helmet_id)
+            return True
+        registry = dynamodb.Table(EXECUTION_REGISTRY_NAME)
+        active = registry.get_item(Key={'helmetId': helmet_id, 'incidentId': incident_id}).get('Item')
+        if not active:
+            logging.warning('No active false-positive incident found for %s', incident_id)
+            return True
+        try:
+            registry.update_item(
+                Key={'helmetId': helmet_id, 'incidentId': incident_id},
+                UpdateExpression='SET #status = :superseded',
+                ConditionExpression='#status = :active AND alertType = :false_positive',
+                ExpressionAttributeNames={'#status': 'status'},
+                ExpressionAttributeValues={
+                    ':superseded': 'SUPERSEDED',
+                    ':active': 'COUNTDOWN_ACTIVE',
+                    ':false_positive': 'FP_CD',
+                },
+            )
+        except ClientError as error:
+            if is_conditional_failure(error):
+                logging.info('False-positive override already handled for %s', incident_id)
+                return True
+            raise
+        return start_incident(
+            helmet_id,
+            f'{incident_id}-override',
+            active['incidentTimestamp'],
+            'STD_CD',
+        )
+    logging.warning('Unsupported override action: %s', body.get('action'))
+    return True
+
+
+def process_queue(queue_url, handler):
+    response = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=5, WaitTimeSeconds=10)
+    for message in response.get('Messages', []):
+        try:
+            if handler(message):
+                sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=message['ReceiptHandle'])
+        except Exception:
+            logging.exception('Message processing failed; leaving message for retry')
+
+
 is_shutting_down = False
+last_poll_time = time.time()
+
 
 def sigterm_handler(signum, frame):
     global is_shutting_down
-    logging.info("Received SIGTERM. Initiating graceful shutdown...")
     is_shutting_down = True
 
-signal.signal(signal.SIGTERM, sigterm_handler)
-signal.signal(signal.SIGINT, sigterm_handler)
-
-# --- Health Check Server ---
-last_poll_time = time.time()
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/health':
-            if time.time() - last_poll_time > 300:
-                self.send_response(500)
-                self.end_headers()
-                self.wfile.write(b"ZOMBIE TASK")
-                return
+        self.send_response(200 if time.time() - last_poll_time <= 300 else 500)
+        self.end_headers()
 
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain')
-            self.end_headers()
-            self.wfile.write(b"HEALTHY")
-        else:
-            self.send_response(404)
-            self.end_headers()
-            
     def log_message(self, format, *args):
         pass
 
+
 def start_health_server():
-    server = HTTPServer(('0.0.0.0', 8080), HealthCheckHandler)
-    logging.info("Health check server listening on port 8080")
-    server.serve_forever()
+    HTTPServer(('0.0.0.0', 8080), HealthCheckHandler).serve_forever()
+
+
+def process_messages():
+    global last_poll_time
+    if not all([ALERT_QUEUE_URL, OVERRIDE_QUEUE_URL, EXECUTION_REGISTRY_NAME, COLD_STORAGE_NAME, STEP_FUNCTION_ARN, RECONCILIATION_STEP_FUNCTION_ARN]):
+        raise RuntimeError('Missing required environment variables')
+    while not is_shutting_down:
+        last_poll_time = time.time()
+        process_queue(ALERT_QUEUE_URL, handle_alert)
+        process_queue(OVERRIDE_QUEUE_URL, handle_override)
+
 
 if __name__ == '__main__':
-    logging.info("Starting Alert Handler Service...")
-    health_thread = threading.Thread(target=start_health_server, daemon=True)
-    health_thread.start()
+    signal.signal(signal.SIGTERM, sigterm_handler)
+    signal.signal(signal.SIGINT, sigterm_handler)
+    threading.Thread(target=start_health_server, daemon=True).start()
     process_messages()

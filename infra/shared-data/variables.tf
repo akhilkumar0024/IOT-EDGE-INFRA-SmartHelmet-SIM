@@ -31,7 +31,7 @@ variable "cold-storage-name" {
 variable "execution-registry-name" {
   description = "Name for the execution registry DynamoDB table"
   type        = string
-  default     = "smart-helmet-execution-registry"
+  default     = "smart-helmet-execution-registry-v2"
 }
 
 variable "device-status-db-table-name" {

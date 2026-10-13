@@ -52,6 +52,14 @@ resource "aws_iam_policy" "alert_policy" {
         Resource = data.aws_ssm_parameter.execution_registry_arn.value
       },
       {
+        Sid    = "ReadColdStorageIncident"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem"
+        ]
+        Resource = data.aws_ssm_parameter.cold_storage_arn.value
+      },
+      {
         Sid    = "AllowReadParameterStore"
         Effect = "Allow"
         Action = [

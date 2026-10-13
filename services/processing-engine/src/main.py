@@ -5,6 +5,7 @@ import logging
 import boto3
 import signal
 import threading
+import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from decimal import Decimal
 
@@ -97,6 +98,10 @@ def process_messages():
                         logging.info(f"Validated crash using {len(all_datapoints)} telemetry records across {len(items)} batch rows. Outcome: {alert_type} (Max Speed: {max_speed})")
 
                     alert_event = {
+                        'incident_id': body.get('incident_id') or str(uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            f"{helmet_id}:{ts_float}:{body.get('location', 'Unknown')}:{speed}"
+                        )),
                         'helmet_id': helmet_id,
                         'timestamp': ts_float,
                         'alert_type': alert_type,

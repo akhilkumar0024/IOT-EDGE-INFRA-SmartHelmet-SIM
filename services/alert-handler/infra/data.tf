@@ -57,6 +57,14 @@ data "aws_ssm_parameter" "execution_registry_arn" {
   name = "/smart-helmet/data/execution-registry-arn"
 }
 
+data "aws_ssm_parameter" "cold_storage_name" {
+  name = "/smart-helmet/data/cold-storage-name"
+}
+
+data "aws_ssm_parameter" "cold_storage_arn" {
+  name = "/smart-helmet/data/cold-storage-arn"
+}
+
 data "aws_ssm_parameter" "alert_state_machine_arn" {
   name = "/smart-helmet/data/alert-state-machine-arn"
 }

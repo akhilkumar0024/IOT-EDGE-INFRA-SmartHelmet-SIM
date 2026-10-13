@@ -18,6 +18,7 @@ resource "aws_ecs_task_definition" "alerts_task" {
         { name = "ALERT_QUEUE_URL", value = data.aws_ssm_parameter.alert_queue_url.value },
         { name = "OVERRIDE_QUEUE_URL", value = data.aws_ssm_parameter.override_queue_url.value },
         { name = "EXECUTION_REGISTRY_NAME", value = data.aws_ssm_parameter.execution_registry_name.value },
+        { name = "COLD_STORAGE_NAME", value = data.aws_ssm_parameter.cold_storage_name.value },
         { name = "STEP_FUNCTION_ARN", value = data.aws_ssm_parameter.alert_state_machine_arn.value },
         { name = "RECONCILIATION_STEP_FUNCTION_ARN", value = data.aws_ssm_parameter.reconciliation_state_machine_arn.value }
       ],

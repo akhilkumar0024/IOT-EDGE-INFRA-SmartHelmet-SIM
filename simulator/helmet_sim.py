@@ -18,6 +18,7 @@ TELEMETRY_TOPIC = f"helmet/{HELMET_ID}/telemetry"
 OVERRIDE_TOPIC = f"helmet/{HELMET_ID}/alert/override"
 LWT_TOPIC = f"helmet/{HELMET_ID}/lwt"
 STATUS_TOPIC = f"helmet/{HELMET_ID}/alert/status"
+active_incident = None
 
 def download_certs():
     logging.info("Fetching IoT Certificates from SSM Parameter Store...")
@@ -39,6 +40,7 @@ def download_certs():
         urllib.request.urlretrieve("https://www.amazontrust.com/repository/AmazonRootCA1.pem", "AmazonRootCA1.pem")
 
 def custom_callback(client, userdata, message):
+    global active_incident
     try:
         payload = json.loads(message.payload.decode('utf-8'))
         action = payload.get('action', 'UNKNOWN')
@@ -46,10 +48,15 @@ def custom_callback(client, userdata, message):
         
         print("\n" + "=" * 65)
         if action == "START_COUNTDOWN":
+            active_incident = {
+                "incident_id": payload.get("incident_id"),
+                "incident_timestamp": payload.get("incident_timestamp")
+            }
             print(f"🚨 HELMET HUD ALERT DISPLAYED! [{action}]")
             print(f"   Message : {msg_text}")
             print("   👉 Actions : Select Option 4 (Cancel) or Option 5 (FP_OVERRIDE)")
         elif action == "DISMISS":
+            active_incident = None
             print(f"✅ HELMET HUD CLEARED! [{action}]")
             print(f"   Message : {msg_text}")
         else:
@@ -113,7 +120,9 @@ def main():
         payload = {
             "helmet_id": HELMET_ID,
             "action": action,
-            "timestamp": int(time.time())
+            "timestamp": int(time.time()),
+            "incident_id": active_incident.get("incident_id") if active_incident else None,
+            "incident_timestamp": active_incident.get("incident_timestamp") if active_incident else None
         }
         myMQTTClient.publish(OVERRIDE_TOPIC, json.dumps(payload), 1)
         logging.info(f"Sent Override -> Action: {action}")
