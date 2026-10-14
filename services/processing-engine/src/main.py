@@ -179,6 +179,10 @@ def process_messages():
                         else:
                             logging.error(f"GENUINE LWT: Helmet {helmet_id} dropped offline! Firing alert.")
                             alert_event = {
+                                'incident_id': body.get('incident_id') or str(uuid.uuid5(
+                                    uuid.NAMESPACE_URL,
+                                    f"{helmet_id}:{float(timestamp)}:LWT"
+                                )),
                                 'helmet_id': helmet_id,
                                 'timestamp': timestamp,
                                 'alert_type': 'retrospective',

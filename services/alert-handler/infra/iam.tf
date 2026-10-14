@@ -47,7 +47,8 @@ resource "aws_iam_policy" "alert_policy" {
         Action = [
           "dynamodb:GetItem",
           "dynamodb:PutItem",
-          "dynamodb:UpdateItem"
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem"
         ]
         Resource = data.aws_ssm_parameter.execution_registry_arn.value
       },

@@ -4,6 +4,7 @@ import os
 import signal
 import threading
 import time
+import uuid
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -67,34 +68,89 @@ def get_countdown(alert_type):
     return get_ssm_parameter('/smart-helmet/config/standard_alert_window_seconds', 30), 'Crash detected.'
 
 
-def start_incident(helmet_id, incident_id, incident_timestamp, alert_type):
+def countdown_status(alert_type):
+    return 'FP_CD' if alert_type == 'FP_CD' else 'STD_CD'
+
+
+def acquire_lease(helmet_id, incident_id, incident_timestamp, alert_type, expected_owner_id=None):
     registry = dynamodb.Table(EXECUTION_REGISTRY_NAME)
     wait_seconds, message = get_countdown(alert_type)
+    countdown = countdown_status(alert_type)
     deadline = int(time.time()) + wait_seconds
     item = {
         'helmetId': helmet_id,
-        'incidentId': incident_id,
+        'ownerIncidentId': incident_id,
         'status': 'INITIALIZING',
+        'countdownStatus': countdown,
         'alertType': alert_type,
         'incidentTimestamp': Decimal(str(incident_timestamp)),
         'serverDeadline': deadline,
         'TimeToExist': deadline + 86400,
     }
+    current = registry.get_item(Key={'helmetId': helmet_id}).get('Item')
+
+    if current and current.get('ownerIncidentId') == incident_id:
+        if current.get('status') != 'INITIALIZING':
+            return None
+        return wait_seconds, message, countdown
+
+    if expected_owner_id:
+        if not current or current.get('ownerIncidentId') != expected_owner_id or current.get('status') != 'FP_CD':
+            logging.info('False-positive override no longer owns the active lease for %s', helmet_id)
+            return None
+        condition = 'ownerIncidentId = :expected_owner AND #status = :expected_status'
+        values = {
+            ':expected_owner': expected_owner_id,
+            ':expected_status': 'FP_CD',
+        }
+    elif current:
+        current_timestamp = float(current.get('incidentTimestamp', 0))
+        if current_timestamp >= float(incident_timestamp):
+            logging.info('Ignoring stale or duplicate incident %s for %s', incident_id, helmet_id)
+            return None
+        condition = 'ownerIncidentId = :expected_owner AND incidentTimestamp = :expected_timestamp'
+        values = {
+            ':expected_owner': current['ownerIncidentId'],
+            ':expected_timestamp': current['incidentTimestamp'],
+        }
+    else:
+        condition = 'attribute_not_exists(helmetId)'
+        values = {}
 
     try:
-        registry.put_item(
-            Item=item,
-            ConditionExpression='attribute_not_exists(helmetId) AND attribute_not_exists(incidentId)',
-        )
+        put_request = {
+            'Item': item,
+            'ConditionExpression': condition,
+        }
+        if expected_owner_id:
+            put_request['ExpressionAttributeNames'] = {'#status': 'status'}
+        if values:
+            put_request['ExpressionAttributeValues'] = values
+        registry.put_item(**put_request)
     except ClientError as error:
         if not is_conditional_failure(error):
             raise
-        existing = registry.get_item(Key={'helmetId': helmet_id, 'incidentId': incident_id}).get('Item')
-        if existing and existing.get('status') in {'COUNTDOWN_ACTIVE', 'CANCELLED', 'CONFIRMED', 'RESOLVED'}:
-            return True
-        if not existing or existing.get('status') != 'INITIALIZING':
-            raise
+        latest = registry.get_item(Key={'helmetId': helmet_id}).get('Item')
+        if latest and latest.get('ownerIncidentId') == incident_id:
+            return None if latest.get('status') != 'INITIALIZING' else (wait_seconds, message, countdown)
+        logging.info('Incident %s did not acquire the active lease for %s', incident_id, helmet_id)
+        return None
 
+    return wait_seconds, message, countdown
+
+
+def start_incident(helmet_id, incident_id, incident_timestamp, alert_type, expected_owner_id=None):
+    lease = acquire_lease(
+        helmet_id,
+        incident_id,
+        incident_timestamp,
+        alert_type,
+        expected_owner_id,
+    )
+    if not lease:
+        return True
+
+    wait_seconds, message, countdown = lease
     execution_input = {
         'helmet_id': helmet_id,
         'incident_id': incident_id,
@@ -111,17 +167,26 @@ def start_incident(helmet_id, incident_id, incident_timestamp, alert_type):
         logging.info('Execution already exists for incident %s', incident_id)
         return True
 
-    registry.update_item(
-        Key={'helmetId': helmet_id, 'incidentId': incident_id},
-        UpdateExpression='SET #status = :active, executionArn = :execution_arn',
-        ConditionExpression='#status = :initializing',
-        ExpressionAttributeNames={'#status': 'status'},
-        ExpressionAttributeValues={
-            ':active': 'COUNTDOWN_ACTIVE',
-            ':initializing': 'INITIALIZING',
-            ':execution_arn': execution['executionArn'],
-        },
-    )
+    registry = dynamodb.Table(EXECUTION_REGISTRY_NAME)
+    try:
+        registry.update_item(
+            Key={'helmetId': helmet_id},
+            UpdateExpression='SET #status = :countdown, executionArn = :execution_arn',
+            ConditionExpression='ownerIncidentId = :incident_id AND #status = :initializing',
+            ExpressionAttributeNames={'#status': 'status'},
+            ExpressionAttributeValues={
+                ':countdown': countdown,
+                ':execution_arn': execution['executionArn'],
+                ':incident_id': incident_id,
+                ':initializing': 'INITIALIZING',
+            },
+        )
+    except ClientError as error:
+        if not is_conditional_failure(error):
+            raise
+        logging.info('Incident %s lost its lease before its workflow became active', incident_id)
+        return True
+
     publish_to_helmet(
         helmet_id,
         'START_COUNTDOWN',
@@ -150,17 +215,25 @@ def handle_cancel(helmet_id, incident_id, incident_timestamp):
 
     registry = dynamodb.Table(EXECUTION_REGISTRY_NAME)
     now = int(time.time())
-    active = registry.get_item(Key={'helmetId': helmet_id, 'incidentId': incident_id}).get('Item')
-    if active and active.get('status') == 'COUNTDOWN_ACTIVE' and now <= int(active['serverDeadline']):
+    active = registry.get_item(Key={'helmetId': helmet_id}).get('Item')
+    if (
+        active
+        and active.get('ownerIncidentId') == incident_id
+        and active.get('status') in {'INITIALIZING', 'STD_CD', 'FP_CD'}
+        and now <= int(active['serverDeadline'])
+    ):
         try:
             registry.update_item(
-                Key={'helmetId': helmet_id, 'incidentId': incident_id},
+                Key={'helmetId': helmet_id},
                 UpdateExpression='SET #status = :cancelled',
-                ConditionExpression='#status = :active AND serverDeadline >= :now',
+                ConditionExpression='ownerIncidentId = :incident_id AND #status IN (:initializing, :standard, :false_positive) AND serverDeadline >= :now',
                 ExpressionAttributeNames={'#status': 'status'},
                 ExpressionAttributeValues={
                     ':cancelled': 'CANCELLED',
-                    ':active': 'COUNTDOWN_ACTIVE',
+                    ':incident_id': incident_id,
+                    ':initializing': 'INITIALIZING',
+                    ':standard': 'STD_CD',
+                    ':false_positive': 'FP_CD',
                     ':now': now,
                 },
             )
@@ -210,32 +283,16 @@ def handle_override(message):
             logging.warning('False-positive override requires incident_id for %s', helmet_id)
             return True
         registry = dynamodb.Table(EXECUTION_REGISTRY_NAME)
-        active = registry.get_item(Key={'helmetId': helmet_id, 'incidentId': incident_id}).get('Item')
-        if not active:
+        active = registry.get_item(Key={'helmetId': helmet_id}).get('Item')
+        if not active or active.get('ownerIncidentId') != incident_id:
             logging.warning('No active false-positive incident found for %s', incident_id)
             return True
-        try:
-            registry.update_item(
-                Key={'helmetId': helmet_id, 'incidentId': incident_id},
-                UpdateExpression='SET #status = :superseded',
-                ConditionExpression='#status = :active AND alertType = :false_positive',
-                ExpressionAttributeNames={'#status': 'status'},
-                ExpressionAttributeValues={
-                    ':superseded': 'SUPERSEDED',
-                    ':active': 'COUNTDOWN_ACTIVE',
-                    ':false_positive': 'FP_CD',
-                },
-            )
-        except ClientError as error:
-            if is_conditional_failure(error):
-                logging.info('False-positive override already handled for %s', incident_id)
-                return True
-            raise
         return start_incident(
             helmet_id,
-            f'{incident_id}-override',
+            str(uuid.uuid5(uuid.NAMESPACE_URL, f'{incident_id}:FP_OVERRIDE')),
             active['incidentTimestamp'],
             'STD_CD',
+            expected_owner_id=incident_id,
         )
     logging.warning('Unsupported override action: %s', body.get('action'))
     return True

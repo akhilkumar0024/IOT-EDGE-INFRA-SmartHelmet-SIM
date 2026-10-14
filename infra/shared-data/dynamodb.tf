@@ -56,17 +56,11 @@ resource "aws_dynamodb_table" "execution_registry" {
   name           = var.execution-registry-name
   billing_mode   = "PROVISIONED"
   hash_key       = "helmetId"
-  range_key      = "incidentId"
   read_capacity  = 5
   write_capacity = 5
 
   attribute {
     name = "helmetId"
-    type = "S"
-  }
-
-  attribute {
-    name = "incidentId"
     type = "S"
   }
 

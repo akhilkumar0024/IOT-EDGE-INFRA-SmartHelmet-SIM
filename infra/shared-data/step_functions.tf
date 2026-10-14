@@ -27,7 +27,7 @@ resource "aws_iam_policy" "step_functions_policy" {
     Statement = [
       {
         Effect = "Allow"
-        Action = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"]
+        Action = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem"]
         Resource = [
           aws_dynamodb_table.cold_storage.arn,
           aws_dynamodb_table.execution_registry.arn
@@ -52,68 +52,103 @@ resource "aws_sfn_state_machine" "alert_state_machine" {
   role_arn = aws_iam_role.step_functions_role.arn
 
   definition = jsonencode({
-    Comment = "Idempotent alert countdown using a composite incident key."
+    Comment = "One active alert lease per helmet with ownership-safe countdown completion."
     StartAt = "WaitWindow"
     States = {
       WaitWindow = {
         Type        = "Wait"
         SecondsPath = "$.wait_seconds"
-        Next        = "ReadRegistry"
+        Next        = "ReadActiveLease"
       }
-      ReadRegistry = {
+      ReadActiveLease = {
         Type     = "Task"
         Resource = "arn:aws:states:::dynamodb:getItem"
         Parameters = {
           TableName = aws_dynamodb_table.execution_registry.name
           Key = {
-            helmetId   = { "S.$" = "$.helmet_id" }
-            incidentId = { "S.$" = "$.incident_id" }
+            helmetId = { "S.$" = "$.helmet_id" }
           }
         }
-        ResultPath = "$.registry"
-        Next       = "CheckRegistryState"
+        ResultPath = "$.lease"
+        Next       = "CheckLease"
       }
-      CheckRegistryState = {
+      CheckLease = {
         Type = "Choice"
         Choices = [
           {
             And = [
-              { Variable = "$.registry.Item.incidentId.S", IsPresent = true },
-              { Variable = "$.registry.Item.incidentId.S", StringEqualsPath = "$.incident_id" },
-              { Variable = "$.registry.Item.status.S", StringEquals = "CANCELLED" }
+              { Variable = "$.lease.Item.ownerIncidentId.S", IsPresent = true },
+              { Variable = "$.lease.Item.ownerIncidentId.S", StringEqualsPath = "$.incident_id" },
+              { Variable = "$.lease.Item.status.S", StringEquals = "CANCELLED" }
             ]
             Next = "WriteCancelledIncident"
           },
           {
             And = [
-              { Variable = "$.registry.Item.incidentId.S", IsPresent = true },
-              { Variable = "$.registry.Item.incidentId.S", StringEqualsPath = "$.incident_id" },
-              { Variable = "$.registry.Item.status.S", StringEquals = "COUNTDOWN_ACTIVE" }
+              { Variable = "$.lease.Item.ownerIncidentId.S", IsPresent = true },
+              { Variable = "$.lease.Item.ownerIncidentId.S", StringEqualsPath = "$.incident_id" },
+              { Variable = "$.lease.Item.status.S", StringEquals = "FP_CD" }
             ]
-            Next = "ConfirmRegistry"
+            Next = "DismissFalsePositive"
+          },
+          {
+            And = [
+              { Variable = "$.lease.Item.ownerIncidentId.S", IsPresent = true },
+              { Variable = "$.lease.Item.ownerIncidentId.S", StringEqualsPath = "$.incident_id" },
+              { Variable = "$.lease.Item.status.S", StringEquals = "STD_CD" }
+            ]
+            Next = "ConfirmIncident"
           }
         ]
         Default = "SilentExit"
       }
-      ConfirmRegistry = {
+      ConfirmIncident = {
         Type     = "Task"
         Resource = "arn:aws:states:::dynamodb:updateItem"
         Parameters = {
           TableName = aws_dynamodb_table.execution_registry.name
           Key = {
-            helmetId   = { "S.$" = "$.helmet_id" }
-            incidentId = { "S.$" = "$.incident_id" }
+            helmetId = { "S.$" = "$.helmet_id" }
           }
           UpdateExpression    = "SET #status = :confirmed"
-          ConditionExpression = "#status = :active"
+          ConditionExpression = "ownerIncidentId = :incident_id AND #status = :standard"
           ExpressionAttributeNames = { "#status" = "status" }
           ExpressionAttributeValues = {
-            ":confirmed" = { "S" = "CONFIRMED" }
-            ":active"    = { "S" = "COUNTDOWN_ACTIVE" }
+            ":incident_id" = { "S.$" = "$.incident_id" }
+            ":standard"    = { "S" = "STD_CD" }
+            ":confirmed"   = { "S" = "CONFIRMED" }
           }
         }
         ResultPath = null
         Next       = "WriteConfirmedIncident"
+        Catch = [{
+          ErrorEquals = ["DynamoDB.ConditionalCheckFailedException"]
+          Next        = "SilentExit"
+        }]
+      }
+      DismissFalsePositive = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::dynamodb:updateItem"
+        Parameters = {
+          TableName = aws_dynamodb_table.execution_registry.name
+          Key = {
+            helmetId = { "S.$" = "$.helmet_id" }
+          }
+          UpdateExpression    = "SET #status = :dismissed"
+          ConditionExpression = "ownerIncidentId = :incident_id AND #status = :false_positive"
+          ExpressionAttributeNames = { "#status" = "status" }
+          ExpressionAttributeValues = {
+            ":incident_id"    = { "S.$" = "$.incident_id" }
+            ":false_positive" = { "S" = "FP_CD" }
+            ":dismissed"      = { "S" = "FALSE_POSITIVE_DISMISSED" }
+          }
+        }
+        ResultPath = null
+        Next       = "WriteFalsePositiveDismissal"
+        Catch = [{
+          ErrorEquals = ["DynamoDB.ConditionalCheckFailedException"]
+          Next        = "SilentExit"
+        }]
       }
       WriteCancelledIncident = {
         Type     = "Task"
@@ -128,7 +163,22 @@ resource "aws_sfn_state_machine" "alert_state_machine" {
           }
         }
         ResultPath = null
-        End        = true
+        Next       = "DeleteCancelledLease"
+      }
+      WriteFalsePositiveDismissal = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::dynamodb:putItem"
+        Parameters = {
+          TableName = aws_dynamodb_table.cold_storage.name
+          Item = {
+            helmetId   = { "S.$" = "$.helmet_id" }
+            timestamp  = { "N.$" = "States.Format('{}', $.incident_timestamp)" }
+            incidentId = { "S.$" = "$.incident_id" }
+            Status     = { "S" = "FALSE_POSITIVE_DISMISSED" }
+          }
+        }
+        ResultPath = null
+        Next       = "DeleteFalsePositiveLease"
       }
       WriteConfirmedIncident = {
         Type     = "Task"
@@ -157,7 +207,67 @@ resource "aws_sfn_state_machine" "alert_state_machine" {
           Source = var.sns-email-address
         }
         ResultPath = null
+        Next       = "DeleteConfirmedLease"
+      }
+      DeleteCancelledLease = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::dynamodb:deleteItem"
+        Parameters = {
+          TableName = aws_dynamodb_table.execution_registry.name
+          Key = { helmetId = { "S.$" = "$.helmet_id" } }
+          ConditionExpression = "ownerIncidentId = :incident_id AND #status = :cancelled"
+          ExpressionAttributeNames = { "#status" = "status" }
+          ExpressionAttributeValues = {
+            ":incident_id" = { "S.$" = "$.incident_id" }
+            ":cancelled"   = { "S" = "CANCELLED" }
+          }
+        }
+        ResultPath = null
         End        = true
+        Catch = [{
+          ErrorEquals = ["DynamoDB.ConditionalCheckFailedException"]
+          Next        = "SilentExit"
+        }]
+      }
+      DeleteFalsePositiveLease = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::dynamodb:deleteItem"
+        Parameters = {
+          TableName = aws_dynamodb_table.execution_registry.name
+          Key = { helmetId = { "S.$" = "$.helmet_id" } }
+          ConditionExpression = "ownerIncidentId = :incident_id AND #status = :dismissed"
+          ExpressionAttributeNames = { "#status" = "status" }
+          ExpressionAttributeValues = {
+            ":incident_id" = { "S.$" = "$.incident_id" }
+            ":dismissed"   = { "S" = "FALSE_POSITIVE_DISMISSED" }
+          }
+        }
+        ResultPath = null
+        End        = true
+        Catch = [{
+          ErrorEquals = ["DynamoDB.ConditionalCheckFailedException"]
+          Next        = "SilentExit"
+        }]
+      }
+      DeleteConfirmedLease = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::dynamodb:deleteItem"
+        Parameters = {
+          TableName = aws_dynamodb_table.execution_registry.name
+          Key = { helmetId = { "S.$" = "$.helmet_id" } }
+          ConditionExpression = "ownerIncidentId = :incident_id AND #status = :confirmed"
+          ExpressionAttributeNames = { "#status" = "status" }
+          ExpressionAttributeValues = {
+            ":incident_id" = { "S.$" = "$.incident_id" }
+            ":confirmed"   = { "S" = "CONFIRMED" }
+          }
+        }
+        ResultPath = null
+        End        = true
+        Catch = [{
+          ErrorEquals = ["DynamoDB.ConditionalCheckFailedException"]
+          Next        = "SilentExit"
+        }]
       }
       SilentExit = { Type = "Pass", End = true }
     }
