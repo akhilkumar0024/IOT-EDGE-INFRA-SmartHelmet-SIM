@@ -18,6 +18,7 @@ TELEMETRY_TOPIC = f"helmet/{HELMET_ID}/telemetry"
 OVERRIDE_TOPIC = f"helmet/{HELMET_ID}/alert/override"
 LWT_TOPIC = f"helmet/{HELMET_ID}/lwt"
 STATUS_TOPIC = f"helmet/{HELMET_ID}/alert/status"
+CONTROL_TOPIC = f"helmet/{HELMET_ID}/control"
 active_incident = None
 
 def download_certs():
@@ -86,6 +87,18 @@ def main():
     myMQTTClient.connect()
     logging.info("Connected!")
 
+    def send_control_status(status):
+        payload = {
+            "status": status,
+            "helmet_id": HELMET_ID,
+            "timestamp": int(time.time())
+        }
+        myMQTTClient.publish(CONTROL_TOPIC, json.dumps(payload), 1)
+        logging.info(f"Published {status} to {CONTROL_TOPIC}")
+
+    # Mark helmet ONLINE in Device Status Table (via Control Queue)
+    send_control_status("ONLINE")
+
     # Subscribe to status topic
     myMQTTClient.subscribe(STATUS_TOPIC, 1, custom_callback)
     logging.info(f"Subscribed to {STATUS_TOPIC}")
@@ -152,6 +165,7 @@ def main():
             elif choice == '5':
                 send_override("FP_OVERRIDE")
             elif choice == '6':
+                send_control_status("GRACEFUL_SHUTDOWN")
                 break
             else:
                 print("Invalid choice.")
@@ -159,7 +173,8 @@ def main():
             time.sleep(1)
 
     except KeyboardInterrupt:
-        pass
+        logging.info("KeyboardInterrupt received. Sending GRACEFUL_SHUTDOWN...")
+        send_control_status("GRACEFUL_SHUTDOWN")
 
     logging.info("Disconnecting...")
     myMQTTClient.disconnect()

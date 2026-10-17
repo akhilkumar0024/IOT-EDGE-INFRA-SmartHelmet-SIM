@@ -136,14 +136,26 @@ def process_messages():
                     try:
                         body = json.loads(msg['Body'])
                         helmet_id = body.get('helmet_id')
+                        msg_status = body.get('status', '').upper()
                         if helmet_id:
-                            logging.info(f"Received Graceful Shutdown for {helmet_id}")
-                            status_table.put_item(Item={
-                                'helmetId': helmet_id,
-                                'status': 'GRACEFUL_SHUTDOWN',
-                                'shutdown_timestamp': Decimal(str(time.time())),
-                                'TimeToExist': int(time.time()) + 900
-                            })
+                            if msg_status == 'ONLINE':
+                                status_table.put_item(Item={
+                                    'helmetId': helmet_id,
+                                    'status': 'ONLINE',
+                                    'connected_at': Decimal(str(time.time())),
+                                    'TimeToExist': int(time.time()) + 900
+                                })
+                                logging.info(f"Helmet {helmet_id} marked ONLINE in Device Status Table")
+                            elif msg_status == 'GRACEFUL_SHUTDOWN':
+                                status_table.put_item(Item={
+                                    'helmetId': helmet_id,
+                                    'status': 'GRACEFUL_SHUTDOWN',
+                                    'shutdown_timestamp': Decimal(str(time.time())),
+                                    'TimeToExist': int(time.time()) + 900
+                                })
+                                logging.info(f"Helmet {helmet_id} marked GRACEFUL_SHUTDOWN in Device Status Table")
+                            else:
+                                logging.warning(f"Unknown control message status '{msg_status}' for {helmet_id}")
                         sqs.delete_message(QueueUrl=CONTROL_QUEUE_URL, ReceiptHandle=msg['ReceiptHandle'])
                     except Exception as e:
                         logging.error(f"Error processing control event: {str(e)}")
@@ -177,7 +189,7 @@ def process_messages():
                         if is_graceful:
                             logging.info(f"LWT Ignored - Helmet {helmet_id} gracefully shut down recently.")
                         else:
-                            logging.error(f"GENUINE LWT: Helmet {helmet_id} dropped offline! Firing alert.")
+                            logging.error(f"GENUINE LWT: Helmet {helmet_id} dropped offline! Starting 30s countdown (STD_CD).")
                             alert_event = {
                                 'incident_id': body.get('incident_id') or str(uuid.uuid5(
                                     uuid.NAMESPACE_URL,
@@ -185,7 +197,7 @@ def process_messages():
                                 )),
                                 'helmet_id': helmet_id,
                                 'timestamp': timestamp,
-                                'alert_type': 'retrospective',
+                                'alert_type': 'STD_CD',
                                 'location': 'Unknown'
                             }
                             sqs.send_message(QueueUrl=ALERT_QUEUE_URL, MessageBody=json.dumps(alert_event))
