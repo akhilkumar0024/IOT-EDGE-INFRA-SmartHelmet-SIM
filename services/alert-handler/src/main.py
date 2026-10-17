@@ -284,16 +284,40 @@ def handle_override(message):
             return True
         registry = dynamodb.Table(EXECUTION_REGISTRY_NAME)
         active = registry.get_item(Key={'helmetId': helmet_id}).get('Item')
-        if not active or active.get('ownerIncidentId') != incident_id:
-            logging.warning('No active false-positive incident found for %s', incident_id)
-            return True
-        return start_incident(
-            helmet_id,
-            str(uuid.uuid5(uuid.NAMESPACE_URL, f'{incident_id}:FP_OVERRIDE')),
-            active['incidentTimestamp'],
-            'STD_CD',
-            expected_owner_id=incident_id,
-        )
+
+        # Case A: Active FP lease still exists -> ownership-fenced in-place upgrade.
+        # An override arriving before the FP window expires upgrades to STD without
+        # releasing the lease to another actor.
+        if active and active.get('ownerIncidentId') == incident_id:
+            return start_incident(
+                helmet_id,
+                str(uuid.uuid5(uuid.NAMESPACE_URL, f'{incident_id}:FP_OVERRIDE')),
+                active['incidentTimestamp'],
+                'STD_CD',
+                expected_owner_id=incident_id,
+            )
+
+        # Case B: FP lease already released (the FP window expired before this
+        # message was dequeued). Fail-safe (Alert_Infra_design.md Scenario 2B):
+        # never silently drop the rider's request for help — start a fresh standard
+        # countdown. Only skip if a DIFFERENT incident currently holds the lease.
+        if not (active and active.get('ownerIncidentId') != incident_id):
+            incident_timestamp = body.get('incident_timestamp')
+            if incident_timestamp is not None:
+                return start_incident(
+                    helmet_id,
+                    str(uuid.uuid5(uuid.NAMESPACE_URL, f'{incident_id}:FP_OVERRIDE')),
+                    incident_timestamp,
+                    'STD_CD',
+                    expected_owner_id=None,
+                )
+            logging.warning('Late FP_OVERRIDE missing incident_timestamp for %s', helmet_id)
+        else:
+            logging.warning(
+                'FP_OVERRIDE ignored - lease currently held by another incident for %s',
+                helmet_id,
+            )
+        return True
     logging.warning('Unsupported override action: %s', body.get('action'))
     return True
 
