@@ -448,8 +448,8 @@ cloud logic today.
 **Key correction — we do NOT check last telemetry for an LWT.** The LWT itself *is* the
 signal: the helmet vanished without warning. The assumption is the helmet may have been
 destroyed and never got a chance to publish anything. So we do not query Hot Storage and do
-not look for a crash flag. We only ask one question: *did this helmet gracefull...
-shut down recently?* If not → treat as a genuine dropout and start an alert.
+not look for a crash flag. We only ask one question: *did this helmet gracefully shut down
+recently?* If not → treat as a genuine dropout and start an alert.
 
 ```
 [AWS IoT Core] → [SQS LWT Queue]         : LWT message (helmet/{id}/lwt)       : on unexpected disconnect
