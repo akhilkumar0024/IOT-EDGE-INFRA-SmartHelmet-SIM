@@ -26,6 +26,11 @@ data "aws_ssm_parameter" "alert_state_machine_arn" {
   name = "/smart-helmet/data/alert-state-machine-arn"
 }
 
+# The reconciliation workflow is a separate state machine and must be alarmed on too.
+data "aws_ssm_parameter" "reconciliation_state_machine_arn" {
+  name = "/smart-helmet/data/reconciliation-state-machine-arn"
+}
+
 # From Messaging Layer (DLQ Names)
 data "aws_ssm_parameter" "telemetry_dlq_name" {
   name = "/smart-helmet/queues/telemetry-dlq-name"

@@ -131,7 +131,7 @@ resource "aws_cloudwatch_metric_alarm" "step_function_failures_alarm" {
 
   metric_query {
     id          = "e1"
-    expression  = "m1 + m2"
+    expression  = "m1 + m2 + m3 + m4"
     label       = "TotalFailuresAndTimeouts"
     return_data = true
   }
@@ -158,6 +158,33 @@ resource "aws_cloudwatch_metric_alarm" "step_function_failures_alarm" {
       stat        = "Sum"
       dimensions = {
         StateMachineArn = data.aws_ssm_parameter.alert_state_machine_arn.value
+      }
+    }
+  }
+
+  # Reconciliation workflow failures were previously invisible to this alarm.
+  metric_query {
+    id = "m3"
+    metric {
+      metric_name = "ExecutionsFailed"
+      namespace   = "AWS/States"
+      period      = 60
+      stat        = "Sum"
+      dimensions = {
+        StateMachineArn = data.aws_ssm_parameter.reconciliation_state_machine_arn.value
+      }
+    }
+  }
+
+  metric_query {
+    id = "m4"
+    metric {
+      metric_name = "ExecutionsTimedOut"
+      namespace   = "AWS/States"
+      period      = 60
+      stat        = "Sum"
+      dimensions = {
+        StateMachineArn = data.aws_ssm_parameter.reconciliation_state_machine_arn.value
       }
     }
   }
