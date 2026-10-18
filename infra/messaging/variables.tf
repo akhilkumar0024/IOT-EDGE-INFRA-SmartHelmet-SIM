@@ -43,13 +43,13 @@ variable "control_dlq_name" {
 variable "lwt_queue_name" {
   description = "Name for LWT SQS queue"
   type        = string
-  default     = "smart-helmet-LWT-queue"
+  default     = "smart-helmet-lwt-queue"
 }
 
 variable "lwt_dlq_name" {
   description = "Name for LWT DLQ"
   type        = string
-  default     = "smart-helmet-LWT-dlq"
+  default     = "smart-helmet-lwt-dlq"
 }
 
 variable "crash_queue_name" {
