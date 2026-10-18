@@ -67,6 +67,17 @@ def custom_callback(client, userdata, message):
     except Exception as e:
         logging.info(f"Received raw message on {message.topic}: {message.payload.decode('utf-8')}")
 
+def send_control_status(client, status):
+    """Publish a device control message (ONLINE / GRACEFUL_SHUTDOWN) to AWS IoT Core."""
+    payload = {
+        "status": status,
+        "helmet_id": HELMET_ID,
+        "timestamp": int(time.time())
+    }
+    client.publish(CONTROL_TOPIC, json.dumps(payload), 1)
+    logging.info(f"Published {status} to {CONTROL_TOPIC}")
+
+
 def main():
     if not IOT_ENDPOINT_URL:
         logging.error("Please export IOT_ENDPOINT_URL before running.")
@@ -87,17 +98,8 @@ def main():
     myMQTTClient.connect()
     logging.info("Connected!")
 
-    def send_control_status(status):
-        payload = {
-            "status": status,
-            "helmet_id": HELMET_ID,
-            "timestamp": int(time.time())
-        }
-        myMQTTClient.publish(CONTROL_TOPIC, json.dumps(payload), 1)
-        logging.info(f"Published {status} to {CONTROL_TOPIC}")
-
     # Mark helmet ONLINE in Device Status Table (via Control Queue)
-    send_control_status("ONLINE")
+    send_control_status(myMQTTClient, "ONLINE")
 
     # Subscribe to status topic
     myMQTTClient.subscribe(STATUS_TOPIC, 1, custom_callback)
@@ -165,7 +167,7 @@ def main():
             elif choice == '5':
                 send_override("FP_OVERRIDE")
             elif choice == '6':
-                send_control_status("GRACEFUL_SHUTDOWN")
+                send_control_status(myMQTTClient, "GRACEFUL_SHUTDOWN")
                 break
             else:
                 print("Invalid choice.")
@@ -174,7 +176,7 @@ def main():
 
     except KeyboardInterrupt:
         logging.info("KeyboardInterrupt received. Sending GRACEFUL_SHUTDOWN...")
-        send_control_status("GRACEFUL_SHUTDOWN")
+        send_control_status(myMQTTClient, "GRACEFUL_SHUTDOWN")
 
     logging.info("Disconnecting...")
     myMQTTClient.disconnect()
