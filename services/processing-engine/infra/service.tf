@@ -21,7 +21,8 @@ resource "aws_ecs_task_definition" "processing_task" {
         { name = "ALERT_QUEUE_URL", value = data.aws_ssm_parameter.alert_queue_url.value },
         { name = "HOT_STORAGE_NAME", value = data.aws_ssm_parameter.hot_storage_name.value },
         { name = "COLD_STORAGE_NAME", value = data.aws_ssm_parameter.cold_storage_name.value },
-        { name = "DEVICE_STATUS_DB_TABLE_NAME", value = data.aws_ssm_parameter.device_status_table_name.value }
+        { name = "DEVICE_STATUS_DB_TABLE_NAME", value = data.aws_ssm_parameter.device_status_table_name.value },
+        { name = "AWS_REGION", value = var.region }
       ],
       portMappings = [
         {

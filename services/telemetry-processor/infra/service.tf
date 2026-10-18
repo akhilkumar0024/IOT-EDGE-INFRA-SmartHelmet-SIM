@@ -17,7 +17,8 @@ resource "aws_ecs_task_definition" "telemetry_task" {
       environment = [
         { name = "TELEMETRY_QUEUE_URL", value = data.aws_ssm_parameter.telemetry_queue_url.value },
         { name = "CRASH_QUEUE_URL", value = data.aws_ssm_parameter.crash_queue_url.value },
-        { name = "HOT_STORAGE_NAME", value = data.aws_ssm_parameter.hot_storage_name.value }
+        { name = "HOT_STORAGE_NAME", value = data.aws_ssm_parameter.hot_storage_name.value },
+        { name = "AWS_REGION", value = var.region }
       ],
       portMappings = [
         {
