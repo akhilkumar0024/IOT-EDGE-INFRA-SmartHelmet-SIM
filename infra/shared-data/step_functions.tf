@@ -110,8 +110,8 @@ resource "aws_sfn_state_machine" "alert_state_machine" {
           Key = {
             helmetId = { "S.$" = "$.helmet_id" }
           }
-          UpdateExpression    = "SET #status = :confirmed"
-          ConditionExpression = "ownerIncidentId = :incident_id AND #status = :standard"
+          UpdateExpression         = "SET #status = :confirmed"
+          ConditionExpression      = "ownerIncidentId = :incident_id AND #status = :standard"
           ExpressionAttributeNames = { "#status" = "status" }
           ExpressionAttributeValues = {
             ":incident_id" = { "S.$" = "$.incident_id" }
@@ -134,8 +134,8 @@ resource "aws_sfn_state_machine" "alert_state_machine" {
           Key = {
             helmetId = { "S.$" = "$.helmet_id" }
           }
-          UpdateExpression    = "SET #status = :dismissed"
-          ConditionExpression = "ownerIncidentId = :incident_id AND #status = :false_positive"
+          UpdateExpression         = "SET #status = :dismissed"
+          ConditionExpression      = "ownerIncidentId = :incident_id AND #status = :false_positive"
           ExpressionAttributeNames = { "#status" = "status" }
           ExpressionAttributeValues = {
             ":incident_id"    = { "S.$" = "$.incident_id" }
@@ -202,7 +202,7 @@ resource "aws_sfn_state_machine" "alert_state_machine" {
           Destination = { ToAddresses = [var.sns-email-address] }
           Message = {
             Subject = { "Data.$" = "States.Format('Smart Helmet incident {} confirmed', $.incident_id)" }
-            Body = { Text = { "Data.$" = "States.Format('Confirmed incident for helmet {}.', $.helmet_id)" } }
+            Body    = { Text = { "Data.$" = "States.Format('Confirmed incident for helmet {}.', $.helmet_id)" } }
           }
           Source = var.sns-email-address
         }
@@ -213,9 +213,9 @@ resource "aws_sfn_state_machine" "alert_state_machine" {
         Type     = "Task"
         Resource = "arn:aws:states:::dynamodb:deleteItem"
         Parameters = {
-          TableName = aws_dynamodb_table.execution_registry.name
-          Key = { helmetId = { "S.$" = "$.helmet_id" } }
-          ConditionExpression = "ownerIncidentId = :incident_id AND #status = :cancelled"
+          TableName                = aws_dynamodb_table.execution_registry.name
+          Key                      = { helmetId = { "S.$" = "$.helmet_id" } }
+          ConditionExpression      = "ownerIncidentId = :incident_id AND #status = :cancelled"
           ExpressionAttributeNames = { "#status" = "status" }
           ExpressionAttributeValues = {
             ":incident_id" = { "S.$" = "$.incident_id" }
@@ -233,9 +233,9 @@ resource "aws_sfn_state_machine" "alert_state_machine" {
         Type     = "Task"
         Resource = "arn:aws:states:::dynamodb:deleteItem"
         Parameters = {
-          TableName = aws_dynamodb_table.execution_registry.name
-          Key = { helmetId = { "S.$" = "$.helmet_id" } }
-          ConditionExpression = "ownerIncidentId = :incident_id AND #status = :dismissed"
+          TableName                = aws_dynamodb_table.execution_registry.name
+          Key                      = { helmetId = { "S.$" = "$.helmet_id" } }
+          ConditionExpression      = "ownerIncidentId = :incident_id AND #status = :dismissed"
           ExpressionAttributeNames = { "#status" = "status" }
           ExpressionAttributeValues = {
             ":incident_id" = { "S.$" = "$.incident_id" }
@@ -253,9 +253,9 @@ resource "aws_sfn_state_machine" "alert_state_machine" {
         Type     = "Task"
         Resource = "arn:aws:states:::dynamodb:deleteItem"
         Parameters = {
-          TableName = aws_dynamodb_table.execution_registry.name
-          Key = { helmetId = { "S.$" = "$.helmet_id" } }
-          ConditionExpression = "ownerIncidentId = :incident_id AND #status = :confirmed"
+          TableName                = aws_dynamodb_table.execution_registry.name
+          Key                      = { helmetId = { "S.$" = "$.helmet_id" } }
+          ConditionExpression      = "ownerIncidentId = :incident_id AND #status = :confirmed"
           ExpressionAttributeNames = { "#status" = "status" }
           ExpressionAttributeValues = {
             ":incident_id" = { "S.$" = "$.incident_id" }
@@ -300,8 +300,8 @@ resource "aws_sfn_state_machine" "reconciliation_state_machine" {
             helmetId  = { "S.$" = "$.helmet_id" }
             timestamp = { "N.$" = "States.Format('{}', $.incident_timestamp)" }
           }
-          UpdateExpression    = "SET #status = :resolved"
-          ConditionExpression = "incidentId = :incident_id AND #status = :confirmed"
+          UpdateExpression         = "SET #status = :resolved"
+          ConditionExpression      = "incidentId = :incident_id AND #status = :confirmed"
           ExpressionAttributeNames = { "#status" = "Status" }
           ExpressionAttributeValues = {
             ":incident_id" = { "S.$" = "$.incident_id" }
@@ -311,6 +311,13 @@ resource "aws_sfn_state_machine" "reconciliation_state_machine" {
         }
         ResultPath = null
         Next       = "SendStandDown"
+        # A duplicate or racing reconciliation (or an incident already resolved)
+        # loses the conditional write. That is the expected idempotent outcome,
+        # not a workflow failure - exit quietly instead of failing the execution.
+        Catch = [{
+          ErrorEquals = ["DynamoDB.ConditionalCheckFailedException"]
+          Next        = "SilentExit"
+        }]
       }
       SendStandDown = {
         Type     = "Task"
@@ -319,7 +326,7 @@ resource "aws_sfn_state_machine" "reconciliation_state_machine" {
           Destination = { ToAddresses = [var.sns-email-address] }
           Message = {
             Subject = { "Data.$" = "States.Format('Smart Helmet incident {} resolved', $.incident_id)" }
-            Body = { Text = { "Data.$" = "States.Format('Late cancellation accepted for helmet {}.', $.helmet_id)" } }
+            Body    = { Text = { "Data.$" = "States.Format('Late cancellation accepted for helmet {}.', $.helmet_id)" } }
           }
           Source = var.sns-email-address
         }
