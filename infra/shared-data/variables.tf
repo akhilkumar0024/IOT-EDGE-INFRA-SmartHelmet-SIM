@@ -41,7 +41,6 @@ variable "device-status-db-table-name" {
 }
 
 variable "sns-email-address" {
-  description = "Email Address to send emergency alerts and notifications"
+  description = "Email address for emergency alerts and notifications. No default is committed: supply it via terraform.tfvars locally or the SNS_EMAIL_ADDRESS GitHub repository variable in CI."
   type        = string
-  default     = "akhilkumar0024.devops@gmail.com"
 }

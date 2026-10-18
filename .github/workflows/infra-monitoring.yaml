@@ -47,7 +47,7 @@ jobs:
         working-directory: ./infra/monitoring
 
       - name: Terraform Plan
-        run: terraform plan -input=false
+        run: terraform plan -input=false -var="sns-email-address=${{ vars.SNS_EMAIL_ADDRESS }}"
         working-directory: ./infra/monitoring
 
   apply:
@@ -73,5 +73,5 @@ jobs:
         working-directory: ./infra/monitoring
 
       - name: Terraform Apply
-        run: terraform apply -input=false -auto-approve
+        run: terraform apply -input=false -auto-approve -var="sns-email-address=${{ vars.SNS_EMAIL_ADDRESS }}"
         working-directory: ./infra/monitoring
