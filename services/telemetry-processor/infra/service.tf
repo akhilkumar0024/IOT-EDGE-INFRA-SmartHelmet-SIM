@@ -53,7 +53,7 @@ resource "aws_ecs_service" "telemetry_service" {
   name            = "smart-helmet-telemetry-service"
   cluster         = data.aws_ssm_parameter.ecs_cluster_name.value
   task_definition = aws_ecs_task_definition.telemetry_task.arn
-  desired_count   = 1
+  desired_count   = 2
   launch_type     = "FARGATE"
 
   network_configuration {

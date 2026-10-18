@@ -1,7 +1,7 @@
 # Autoscaling Target for Alert Handler
 resource "aws_appautoscaling_target" "alerts_target" {
   max_capacity       = 3
-  min_capacity       = 1
+  min_capacity       = 2
   resource_id        = "service/${data.aws_ssm_parameter.ecs_cluster_name.value}/${aws_ecs_service.alerts_service.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"

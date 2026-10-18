@@ -56,7 +56,7 @@ resource "aws_ecs_service" "alerts_service" {
   name            = "smart-helmet-alerts-service"
   cluster         = data.aws_ssm_parameter.ecs_cluster_name.value
   task_definition = aws_ecs_task_definition.alerts_task.arn
-  desired_count   = 1
+  desired_count   = 2
   launch_type     = "FARGATE"
 
   network_configuration {
