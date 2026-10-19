@@ -137,36 +137,26 @@ def process_messages():
                         body = json.loads(msg['Body'])
                         helmet_id = body.get('helmet_id')
                         msg_status = body.get('status', '').upper()
-                        handled = False
-                        if helmet_id and msg_status == 'ONLINE':
-                            status_table.put_item(Item={
-                                'helmetId': helmet_id,
-                                'status': 'ONLINE',
-                                'connected_at': Decimal(str(time.time())),
-                                'TimeToExist': int(time.time()) + 900
-                            })
-                            logging.info(f"Helmet {helmet_id} marked ONLINE in Device Status Table")
-                            handled = True
-                        elif helmet_id and msg_status == 'GRACEFUL_SHUTDOWN':
-                            status_table.put_item(Item={
-                                'helmetId': helmet_id,
-                                'status': 'GRACEFUL_SHUTDOWN',
-                                'shutdown_timestamp': Decimal(str(time.time())),
-                                'TimeToExist': int(time.time()) + 900
-                            })
-                            logging.info(f"Helmet {helmet_id} marked GRACEFUL_SHUTDOWN in Device Status Table")
-                            handled = True
-
-                        if handled:
-                            sqs.delete_message(QueueUrl=CONTROL_QUEUE_URL, ReceiptHandle=msg['ReceiptHandle'])
-                        else:
-                            # Leave the message so SQS redrives it to the control DLQ after
-                            # maxReceiveCount, instead of silently dropping unhandleable
-                            # control events (unknown status or missing helmet_id).
-                            logging.warning(
-                                "Unhandled control message (helmet_id=%r status=%r); leaving for DLQ redrive",
-                                helmet_id, msg_status,
-                            )
+                        if helmet_id:
+                            if msg_status == 'ONLINE':
+                                status_table.put_item(Item={
+                                    'helmetId': helmet_id,
+                                    'status': 'ONLINE',
+                                    'connected_at': Decimal(str(time.time())),
+                                    'TimeToExist': int(time.time()) + 900
+                                })
+                                logging.info(f"Helmet {helmet_id} marked ONLINE in Device Status Table")
+                            elif msg_status == 'GRACEFUL_SHUTDOWN':
+                                status_table.put_item(Item={
+                                    'helmetId': helmet_id,
+                                    'status': 'GRACEFUL_SHUTDOWN',
+                                    'shutdown_timestamp': Decimal(str(time.time())),
+                                    'TimeToExist': int(time.time()) + 900
+                                })
+                                logging.info(f"Helmet {helmet_id} marked GRACEFUL_SHUTDOWN in Device Status Table")
+                            else:
+                                logging.warning(f"Unknown control message status '{msg_status}' for {helmet_id}")
+                        sqs.delete_message(QueueUrl=CONTROL_QUEUE_URL, ReceiptHandle=msg['ReceiptHandle'])
                     except Exception as e:
                         logging.error(f"Error processing control event: {str(e)}")
 
