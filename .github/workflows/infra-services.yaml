@@ -87,8 +87,8 @@ jobs:
         if: steps.check.outputs.should_run == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-region: ap-south-1
-          role-to-assume: arn:aws:iam::167378055060:role/smart-helmet-tf-plan-role
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/smart-helmet-tf-plan-role
           role-session-name: GHActionsServiceInfraPlan
 
       - name: Terraform Format Check
@@ -147,8 +147,8 @@ jobs:
         if: steps.check.outputs.should_run == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-region: ap-south-1
-          role-to-assume: arn:aws:iam::167378055060:role/smart-helmet-tf-deploy-role
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/smart-helmet-tf-deploy-role
           role-session-name: GHActionsServiceInfraApply
 
       - name: Terraform Init
