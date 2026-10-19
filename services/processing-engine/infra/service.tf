@@ -58,7 +58,7 @@ resource "aws_ecs_service" "processing_service" {
   name            = "smart-helmet-processing-service"
   cluster         = data.aws_ssm_parameter.ecs_cluster_name.value
   task_definition = aws_ecs_task_definition.processing_task.arn
-  desired_count   = 2
+  desired_count   = var.desired_count
   launch_type     = "FARGATE"
 
   network_configuration {
@@ -68,7 +68,11 @@ resource "aws_ecs_service" "processing_service" {
   }
 
   lifecycle {
-    ignore_changes = [task_definition]
+    # task_definition is owned by the CI deploy workflow (it registers new
+    # revisions). desired_count is owned by Application Auto Scaling at
+    # runtime - without this, every apply would reset a scaled-out service
+    # back to the configured seed and undo the scale-out.
+    ignore_changes = [task_definition, desired_count]
   }
 
   tags = {
