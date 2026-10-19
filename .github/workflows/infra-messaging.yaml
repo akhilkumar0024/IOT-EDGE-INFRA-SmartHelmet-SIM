@@ -15,6 +15,13 @@ permissions:
   id-token: write
   contents: read
 
+# Serialise runs of the same workflow on the same ref. cancel-in-progress is
+# false on purpose: cancelling mid `terraform apply` can leave the state locked
+# or the stack half-applied.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   plan:
     name: "Terraform Plan (Messaging)"
