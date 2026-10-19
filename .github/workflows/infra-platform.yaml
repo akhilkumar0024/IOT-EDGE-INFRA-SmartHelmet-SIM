@@ -79,6 +79,14 @@ jobs:
         run: terraform init -input=false
         working-directory: ./infra/platform
 
+      - name: Terraform Format Check
+        run: terraform fmt -check -diff
+        working-directory: ./infra/platform
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ./infra/platform
+
       - name: Terraform Apply
         run: terraform apply -input=false -auto-approve
         working-directory: ./infra/platform

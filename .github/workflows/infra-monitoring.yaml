@@ -79,6 +79,14 @@ jobs:
         run: terraform init -input=false
         working-directory: ./infra/monitoring
 
+      - name: Terraform Format Check
+        run: terraform fmt -check -diff
+        working-directory: ./infra/monitoring
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ./infra/monitoring
+
       - name: Terraform Apply
         run: terraform apply -input=false -auto-approve -var="sns-email-address=${{ vars.SNS_EMAIL_ADDRESS }}"
         working-directory: ./infra/monitoring

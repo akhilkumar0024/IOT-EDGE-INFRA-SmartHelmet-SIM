@@ -156,6 +156,16 @@ jobs:
         run: terraform init -input=false
         working-directory: services/${{ matrix.service }}/infra
 
+      - name: Terraform Format Check
+        if: steps.check.outputs.should_run == 'true'
+        run: terraform fmt -check -diff
+        working-directory: services/${{ matrix.service }}/infra
+
+      - name: Terraform Validate
+        if: steps.check.outputs.should_run == 'true'
+        run: terraform validate
+        working-directory: services/${{ matrix.service }}/infra
+
       - name: Terraform Apply
         if: steps.check.outputs.should_run == 'true'
         run: terraform apply -input=false -auto-approve
