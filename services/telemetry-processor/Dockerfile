@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 # Unbuffered stdout so logs reach CloudWatch promptly, and no .pyc writing
 # because the application directory is not writable by the runtime user below.
