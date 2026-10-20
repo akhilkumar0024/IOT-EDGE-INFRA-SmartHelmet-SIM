@@ -64,6 +64,19 @@ jobs:
       - name: Lint Dockerfiles
         run: hadolint services/*/Dockerfile
 
+  shell:
+    name: Shell scripts (shellcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # shellcheck is pre-installed on the ubuntu runners, but it is only ever
+      # reached indirectly through actionlint's `run:` analysis. Standalone
+      # scripts under Scripts/ would otherwise have no coverage at all.
+      - name: shellcheck
+        run: shellcheck -s bash Scripts/*.sh
+
   workflows:
     name: Workflows (actionlint + yamllint)
     runs-on: ubuntu-latest

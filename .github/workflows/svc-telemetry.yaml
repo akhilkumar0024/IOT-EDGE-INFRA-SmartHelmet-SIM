@@ -46,11 +46,13 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: smart-helmet-telemetry-service-repo
-          IMAGE_TAG: ${{ github.sha }}
+          # Not a bare commit SHA: re-running this workflow for the same commit
+          # would push an identical tag, which fails once the repository is
+          # IMMUTABLE.
+          IMAGE_TAG: ${{ github.sha }}-${{ github.run_number }}
         run: |
-          docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" services/telemetry-processor
+          docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" services/telemetry-processor
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Download Active Task Definition from AWS
