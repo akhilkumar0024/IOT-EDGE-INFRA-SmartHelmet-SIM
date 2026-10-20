@@ -144,6 +144,7 @@ resource "aws_iam_policy" "tf_plan_policy" {
           "ecs:DescribeClusters", "ecs:DescribeServices", "ecs:DescribeTaskDefinition",
           "logs:DescribeLogGroups",
           "cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource",
+          "cloudwatch:GetDashboard", "cloudwatch:ListDashboards",
           "application-autoscaling:Describe*",
           "iot:DescribeEndpoint", "iot:DescribeCertificate", "iot:GetPolicy", "iot:ListTopicRules",
           "iot:GetV2LoggingOptions", "iot:GetLoggingOptions",
@@ -275,6 +276,8 @@ resource "aws_iam_policy" "tf_deploy_policy" {
           "arn:aws:cloudwatch:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:alarm:smart-helmet-*",
           "arn:aws:cloudwatch:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:alarm:iot-core-*",
           "arn:aws:cloudwatch:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:alarm:TargetTracking-*",
+          # Dashboard ARNs carry no region: arn:aws:cloudwatch::<account>:dashboard/<name>
+          "arn:aws:cloudwatch::${data.aws_caller_identity.current.account_id}:dashboard/smart-helmet-*",
           "arn:aws:application-autoscaling:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:scalable-target/*",
           "arn:aws:application-autoscaling:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:scaling-policy:*"
         ]
