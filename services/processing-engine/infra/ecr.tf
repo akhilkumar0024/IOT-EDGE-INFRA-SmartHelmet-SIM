@@ -1,6 +1,6 @@
 resource "aws_ecr_repository" "processing_repo" {
   name                 = "smart-helmet-processing-service-repo"
-  image_tag_mutability = "MUTABLE"
+  image_tag_mutability = "IMMUTABLE"
   force_delete         = true
 
   image_scanning_configuration {

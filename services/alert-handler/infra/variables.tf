@@ -12,8 +12,8 @@ variable "environment" {
 
 variable "image_tag" {
   type        = string
-  description = "Docker image tag to deploy"
-  default     = "latest"
+  description = "Image tag baked into the Terraform-managed task definition only. CI always overrides it by rendering a new task definition carrying the <sha>-<run_number> tag, so this value is never what runs once a pipeline has deployed. It exists so that `terraform apply` needs no input; 'bootstrap' is used deliberately because no such tag is ever pushed."
+  default     = "bootstrap"
 }
 
 variable "desired_count" {
