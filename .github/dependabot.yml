@@ -10,9 +10,19 @@
 # Weekly, with a low open-PR limit per ecosystem: this is a portfolio project,
 # not something with an on-call rota, and a wall of dependency PRs is worse than
 # a slow update cadence.
+#
+# ---------------------------------------------------------------------------
+# Curated 2026-10-20 (TODO §3.9). The first run opened 18 PRs at once, 15 of
+# them major-version jumps, because Dependabot does not treat the constraint in
+# `required_providers` as a fence. The rules below keep the signal - minor and
+# patch updates, which we can actually absorb - and hold back the majors, which
+# need a deliberate migration rather than a merge.
+#
+# `groups` collapses the per-directory fan-out into one reviewable PR.
+# `ignore` is used only where a bump was *verified* not to be mergeable yet;
+# the reasoning is recorded next to each rule so it reads as a decision.
 
 version: 2
-
 updates:
   # ---------------------------------------------------------------- actions
   - package-ecosystem: github-actions
@@ -21,9 +31,14 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(ci)"
-    labels:
-      - dependencies
     open-pull-requests-limit: 5
+    groups:
+      # Without this, five actions means five PRs. Majors are deliberately NOT
+      # ignored here: the runner now forces these actions off Node.js 20 onto
+      # Node.js 24, so the upgrades are becoming necessary rather than optional.
+      actions:
+        patterns:
+          - "*"
 
   # ------------------------------------------------------------------- pip
   # One entry per requirements.txt - Dependabot resolves a single directory.
@@ -33,9 +48,11 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
-    labels:
-      - dependencies
     open-pull-requests-limit: 3
+    groups:
+      python-deps:
+        patterns:
+          - "*"
 
   - package-ecosystem: pip
     directory: /services/processing-engine/src
@@ -43,9 +60,11 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
-    labels:
-      - dependencies
     open-pull-requests-limit: 3
+    groups:
+      python-deps:
+        patterns:
+          - "*"
 
   - package-ecosystem: pip
     directory: /services/alert-handler/src
@@ -53,9 +72,11 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
-    labels:
-      - dependencies
     open-pull-requests-limit: 3
+    groups:
+      python-deps:
+        patterns:
+          - "*"
 
   # ---------------------------------------------------------------- docker
   # Tracks the base image tag in each Dockerfile (python:3.11-slim).
@@ -65,9 +86,14 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
-    labels:
-      - dependencies
     open-pull-requests-limit: 3
+    ignore:
+      # `python:3.11-slim` is a *floating* tag - Debian security fixes arrive on
+      # any rebuild, so holding the tag line at 3.11 does not hold back patches.
+      # Moving 3.11 -> 3.14 is a runtime migration: it needs a wheel-availability
+      # check, a deploy smoke test, and a fresh .trivyignore baseline (§3.5).
+      # Remove this rule when that migration is actually scheduled.
+      - dependency-name: "python"
 
   - package-ecosystem: docker
     directory: /services/processing-engine
@@ -75,9 +101,9 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
-    labels:
-      - dependencies
     open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: "python"
 
   - package-ecosystem: docker
     directory: /services/alert-handler
@@ -85,22 +111,32 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
-    labels:
-      - dependencies
     open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: "python"
 
   # ------------------------------------------------------------- terraform
   # One entry per stack; the hashicorp/aws provider is pinned with "~> 5.0" in
-  # every provider.tf.
+  # every provider.tf. Stacks cannot be collapsed with a glob: each carries its
+  # own .terraform.lock.hcl.
   - package-ecosystem: terraform
     directory: /infra/platform
     schedule:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
-    labels:
-      - dependencies
     open-pull-requests-limit: 3
+    groups:
+      terraform-providers:
+        patterns:
+          - "*"
+    ignore:
+      # hashicorp/aws 5.x -> 6.x is a breaking major, not a bump. Verified on
+      # PR #5: credentials, init and validate all succeed, then `terraform plan`
+      # fails - so this is a genuine migration. Remove when it is scheduled.
+      - dependency-name: "hashicorp/aws"
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: terraform
     directory: /infra/shared-data
@@ -108,9 +144,15 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
-    labels:
-      - dependencies
     open-pull-requests-limit: 3
+    groups:
+      terraform-providers:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "hashicorp/aws"
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: terraform
     directory: /infra/messaging
@@ -118,9 +160,15 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
-    labels:
-      - dependencies
     open-pull-requests-limit: 3
+    groups:
+      terraform-providers:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "hashicorp/aws"
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: terraform
     directory: /infra/monitoring
@@ -128,9 +176,15 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
-    labels:
-      - dependencies
     open-pull-requests-limit: 3
+    groups:
+      terraform-providers:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "hashicorp/aws"
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: terraform
     directory: /services/telemetry-processor/infra
@@ -138,9 +192,15 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
-    labels:
-      - dependencies
     open-pull-requests-limit: 3
+    groups:
+      terraform-providers:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "hashicorp/aws"
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: terraform
     directory: /services/processing-engine/infra
@@ -148,9 +208,15 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
-    labels:
-      - dependencies
     open-pull-requests-limit: 3
+    groups:
+      terraform-providers:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "hashicorp/aws"
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: terraform
     directory: /services/alert-handler/infra
@@ -158,6 +224,12 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps)"
-    labels:
-      - dependencies
     open-pull-requests-limit: 3
+    groups:
+      terraform-providers:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "hashicorp/aws"
+        update-types:
+          - version-update:semver-major
