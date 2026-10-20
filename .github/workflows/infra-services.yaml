@@ -70,9 +70,9 @@ jobs:
         id: check
         run: |
           if echo '${{ needs.detect-changes.outputs.services }}' | grep -q '${{ matrix.service }}'; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
           else
-            echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Checkout Code
@@ -130,9 +130,9 @@ jobs:
           MANUAL_SVC="${{ needs.detect-changes.outputs.manual_service }}"
 
           if [ "$IS_CHANGED" = "true" ] || [ "$IS_MANUAL_ALL" = "true" ] || [ "$MANUAL_SVC" = "${{ matrix.service }}" ]; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
           else
-            echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Checkout Code
