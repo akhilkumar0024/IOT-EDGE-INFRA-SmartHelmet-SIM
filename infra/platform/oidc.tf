@@ -148,6 +148,7 @@ resource "aws_iam_policy" "tf_plan_policy" {
           "cloudwatch:DescribeAlarms", "cloudwatch:ListTagsForResource",
           "application-autoscaling:Describe*",
           "iot:DescribeEndpoint", "iot:DescribeCertificate", "iot:GetPolicy", "iot:ListTopicRules",
+          "iot:GetV2LoggingOptions", "iot:GetLoggingOptions",
           "sns:GetTopicAttributes",
           "ssm:GetParameter", "ssm:GetParameters", "ssm:DescribeParameters",
           "iam:GetRole", "iam:GetPolicy", "iam:GetOpenIDConnectProvider"
@@ -222,6 +223,19 @@ resource "aws_iam_policy" "tf_deploy_policy" {
           "ecs:DescribeTaskDefinition",
           "iam:GetOpenIDConnectProvider",
           "iam:ListOpenIDConnectProviders"
+        ]
+        Resource = "*"
+      },
+      {
+        # Account-level IoT APIs carry no resource ARN, so the scoped `iot:*`
+        # grant below does not cover them. Without this the apply cannot even
+        # refresh aws_iot_logging_options.
+        Effect = "Allow"
+        Action = [
+          "iot:GetV2LoggingOptions",
+          "iot:SetV2LoggingOptions",
+          "iot:GetLoggingOptions",
+          "iot:SetLoggingOptions"
         ]
         Resource = "*"
       },
