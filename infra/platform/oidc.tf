@@ -17,6 +17,11 @@ resource "aws_iam_openid_connect_provider" "github" {
 resource "aws_iam_role" "github_actions_deploy" {
   name = var.deploy_role_name
 
+  # Trust condition is pinned to refs/heads/main on purpose: this role can
+  # push images and redeploy ECS services, so it must not be assumable from a
+  # feature branch, even if a new workflow is added there.
+  # ROLE 2 (tf-plan) below deliberately stays repo-wide, because PR plan runs
+  # legitimately originate from branches - and that role is read-only.
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -31,7 +36,7 @@ resource "aws_iam_role" "github_actions_deploy" {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
           }
           StringLike = {
-            "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*"
+            "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:ref:refs/heads/main"
           }
         }
       }
