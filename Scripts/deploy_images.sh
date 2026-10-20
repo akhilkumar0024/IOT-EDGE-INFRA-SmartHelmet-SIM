@@ -39,7 +39,7 @@ push_image() {
 }
 
 # Note the repository name for alerts is singular ("alert-service-repo") while
-# the ECS service is plural ("alerts-service") - see TODO §5.11.
+# the ECS service is plural ("alerts-service").
 push_image smart-helmet-telemetry-service-repo ./services/telemetry-processor
 push_image smart-helmet-processing-service-repo ./services/processing-engine
 push_image smart-helmet-alert-service-repo ./services/alert-handler

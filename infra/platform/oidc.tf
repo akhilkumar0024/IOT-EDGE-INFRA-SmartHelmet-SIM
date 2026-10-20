@@ -1,12 +1,10 @@
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
-# 1. Fetch GitHub's OIDC OpenID configuration dynamically
 data "tls_certificate" "github" {
   url = "https://token.actions.githubusercontent.com"
 }
 
-# 2. OpenID Connect Provider for GitHub Actions
 resource "aws_iam_openid_connect_provider" "github" {
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]

@@ -1,5 +1,3 @@
-# IoT Core logging (TODO §5.4).
-#
 # aws_iot_logging_options maps to the V2 logging API (SetV2LoggingOptions), so
 # events are written as JSON to the `AWSIotLogsV2` log group.
 #

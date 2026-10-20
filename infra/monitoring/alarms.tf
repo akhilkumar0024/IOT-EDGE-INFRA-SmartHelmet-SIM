@@ -1,4 +1,3 @@
-# 1. SNS Topic for Infrastructure Alerts
 resource "aws_sns_topic" "infra_alerts" {
   name = "smart-helmet-infra-monitoring-alerts-topic"
 
@@ -7,14 +6,12 @@ resource "aws_sns_topic" "infra_alerts" {
   }
 }
 
-# 2. SNS Subscription
 resource "aws_sns_topic_subscription" "infra_alerts_sub" {
   topic_arn = aws_sns_topic.infra_alerts.arn
   protocol  = "email"
   endpoint  = var.sns-email-address
 }
 
-# 3. CloudWatch Alarms for DLQs
 locals {
   dlq_map = {
     "telemetry" = data.aws_ssm_parameter.telemetry_dlq_name.value
@@ -54,7 +51,6 @@ resource "aws_cloudwatch_metric_alarm" "dlq_alarms" {
   alarm_actions = [aws_sns_topic.infra_alerts.arn]
 }
 
-# 4. CloudWatch Alarms for DynamoDB Throttling
 locals {
   dynamodb_tables = {
     "hot-storage"        = data.aws_ssm_parameter.hot_storage_name.value
@@ -106,7 +102,6 @@ resource "aws_cloudwatch_metric_alarm" "dynamodb_throttle_alarms" {
   }
 }
 
-# 5. IoT Core Throttling Alarm
 resource "aws_cloudwatch_metric_alarm" "iot_core_throttling_alarm" {
   alarm_name          = "smart-helmet-iot-core-throttling-alarm"
   comparison_operator = "GreaterThanThreshold"
@@ -120,7 +115,6 @@ resource "aws_cloudwatch_metric_alarm" "iot_core_throttling_alarm" {
   alarm_actions       = [aws_sns_topic.infra_alerts.arn]
 }
 
-# 6. Step Function Failure Alarm
 resource "aws_cloudwatch_metric_alarm" "step_function_failures_alarm" {
   alarm_name          = "smart-helmet-step-function-failures-alarm"
   comparison_operator = "GreaterThanThreshold"
@@ -190,7 +184,6 @@ resource "aws_cloudwatch_metric_alarm" "step_function_failures_alarm" {
   }
 }
 
-# 7. SQS Oldest Message Age Alarms
 resource "aws_cloudwatch_metric_alarm" "sqs_old_message_alarm" {
   for_each            = local.queue_map
   alarm_name          = "smart-helmet-sqs-${each.key}-old-message-alarm"
@@ -209,7 +202,6 @@ resource "aws_cloudwatch_metric_alarm" "sqs_old_message_alarm" {
   }
 }
 
-# 8. Application Error Metric Filter & Alarm
 resource "aws_cloudwatch_log_metric_filter" "ecs_error_filter" {
   name           = "smart-helmet-ecs-error-filter"
   pattern        = "ERROR"
@@ -235,7 +227,6 @@ resource "aws_cloudwatch_metric_alarm" "ecs_error_alarm" {
   alarm_actions       = [aws_sns_topic.infra_alerts.arn]
 }
 
-# 9. ECS Cluster Memory Utilization Alarm
 resource "aws_cloudwatch_metric_alarm" "ecs_memory_alarm" {
   alarm_name          = "smart-helmet-ecs-memory-alarm"
   comparison_operator = "GreaterThanThreshold"

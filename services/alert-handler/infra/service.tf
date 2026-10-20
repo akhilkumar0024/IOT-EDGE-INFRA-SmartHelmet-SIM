@@ -1,4 +1,3 @@
-# ECS Task Definition for Alert Handler
 resource "aws_ecs_task_definition" "alerts_task" {
   family                   = "smart-helmet-alerts-task"
   requires_compatibilities = ["FARGATE"]
@@ -52,7 +51,6 @@ resource "aws_ecs_task_definition" "alerts_task" {
   }
 }
 
-# ECS Fargate Service
 resource "aws_ecs_service" "alerts_service" {
   name            = "smart-helmet-alerts-service"
   cluster         = data.aws_ssm_parameter.ecs_cluster_name.value

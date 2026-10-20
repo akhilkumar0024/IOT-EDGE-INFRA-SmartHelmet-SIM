@@ -1,4 +1,3 @@
-# 1. Create VPC for ECS Fargate
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc-cidr
   instance_tenancy     = "default"
@@ -10,7 +9,6 @@ resource "aws_vpc" "main" {
   }
 }
 
-# 2. Create Internet Gateway for the VPC
 resource "aws_internet_gateway" "gw" {
   vpc_id = aws_vpc.main.id
 
@@ -19,7 +17,6 @@ resource "aws_internet_gateway" "gw" {
   }
 }
 
-# 3. Create Public Subnets
 resource "aws_subnet" "public_subnets" {
   for_each                = var.public-subnets-CIDR-AZ
   vpc_id                  = aws_vpc.main.id
@@ -32,7 +29,6 @@ resource "aws_subnet" "public_subnets" {
   }
 }
 
-# 4. Create Route Table for public subnets
 resource "aws_route_table" "public_route_table" {
   vpc_id = aws_vpc.main.id
 
@@ -46,14 +42,12 @@ resource "aws_route_table" "public_route_table" {
   }
 }
 
-# 5. Associate Public Subnets with Route Table
 resource "aws_route_table_association" "public_assoc" {
   for_each       = aws_subnet.public_subnets
   subnet_id      = each.value.id
   route_table_id = aws_route_table.public_route_table.id
 }
 
-# 6. VPC Endpoint for S3 (Gateway)
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.main.id
   service_name      = "com.amazonaws.${var.region}.s3"
@@ -65,7 +59,6 @@ resource "aws_vpc_endpoint" "s3" {
   }
 }
 
-# 7. VPC Endpoint for DynamoDB (Gateway)
 resource "aws_vpc_endpoint" "dynamodb" {
   vpc_id            = aws_vpc.main.id
   service_name      = "com.amazonaws.${var.region}.dynamodb"

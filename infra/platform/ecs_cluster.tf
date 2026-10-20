@@ -1,4 +1,3 @@
-# 1. ECS Cluster
 resource "aws_ecs_cluster" "main" {
   name = var.ecs-cluster-name
 
@@ -12,7 +11,6 @@ resource "aws_ecs_cluster" "main" {
   }
 }
 
-# 2. CloudWatch Log Group for ECS Services
 resource "aws_cloudwatch_log_group" "ecs_logs" {
   name              = var.ecs-log-group-name
   retention_in_days = 30
@@ -22,7 +20,7 @@ resource "aws_cloudwatch_log_group" "ecs_logs" {
   }
 }
 
-# 3. ECS Task Execution Role (Shared by all services to pull images and write logs)
+# Shared by all three services: pulls their images and writes their logs.
 resource "aws_iam_role" "ecs_execution_role" {
   name = "smart-helmet-ecs-execution-role"
 

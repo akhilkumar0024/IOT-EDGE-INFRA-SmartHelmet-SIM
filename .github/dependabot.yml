@@ -1,26 +1,15 @@
 # Dependabot configuration.
 #
-# Actions are pinned to commit SHAs (TODO §3.1). That is only maintainable if
-# something advances the pins, so Dependabot is a prerequisite for that change
-# rather than an optional extra - without it the pins rot silently.
+# Actions are pinned to commit SHAs, which is only maintainable if something
+# advances the pins - without this they rot silently. Dependabot rewrites both
+# the SHA and the version comment in `uses: owner/repo@<sha> # vX.Y.Z`.
 #
-# Dependabot understands `uses: owner/repo@<sha> # vX.Y.Z` and rewrites both the
-# SHA and the comment, so the version stays readable in the diff.
+# Weekly with a low open-PR limit: this is a portfolio project, not something
+# with an on-call rota.
 #
-# Weekly, with a low open-PR limit per ecosystem: this is a portfolio project,
-# not something with an on-call rota, and a wall of dependency PRs is worse than
-# a slow update cadence.
-#
-# ---------------------------------------------------------------------------
-# Curated 2026-10-20 (TODO §3.9). The first run opened 18 PRs at once, 15 of
-# them major-version jumps, because Dependabot does not treat the constraint in
-# `required_providers` as a fence. The rules below keep the signal - minor and
-# patch updates, which we can actually absorb - and hold back the majors, which
-# need a deliberate migration rather than a merge.
-#
-# `groups` collapses the per-directory fan-out into one reviewable PR.
-# `ignore` is used only where a bump was *verified* not to be mergeable yet;
-# the reasoning is recorded next to each rule so it reads as a decision.
+# `groups` collapses the per-directory fan-out into one reviewable PR. `ignore`
+# is used only where a bump was verified not to be mergeable yet - Dependabot
+# does not treat the constraint in `required_providers` as a fence.
 
 version: 2
 updates:
@@ -91,7 +80,7 @@ updates:
       # `python:3.11-slim` is a *floating* tag - Debian security fixes arrive on
       # any rebuild, so holding the tag line at 3.11 does not hold back patches.
       # Moving 3.11 -> 3.14 is a runtime migration: it needs a wheel-availability
-      # check, a deploy smoke test, and a fresh .trivyignore baseline (§3.5).
+      # check, a deploy smoke test, and a fresh .trivyignore baseline.
       # Remove this rule when that migration is actually scheduled.
       - dependency-name: "python"
 
@@ -131,9 +120,9 @@ updates:
         patterns:
           - "*"
     ignore:
-      # hashicorp/aws 5.x -> 6.x is a breaking major, not a bump. Verified on
-      # PR #5: credentials, init and validate all succeed, then `terraform plan`
-      # fails - so this is a genuine migration. Remove when it is scheduled.
+      # hashicorp/aws 5.x -> 6.x is a breaking major: credentials, init and
+      # validate all succeed, then `terraform plan` fails. Remove this rule when
+      # the migration is scheduled.
       - dependency-name: "hashicorp/aws"
         update-types:
           - version-update:semver-major

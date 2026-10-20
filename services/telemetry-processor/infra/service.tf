@@ -1,4 +1,3 @@
-# ECS Task Definition for Telemetry Processor
 resource "aws_ecs_task_definition" "telemetry_task" {
   family                   = "smart-helmet-telemetry-task"
   requires_compatibilities = ["FARGATE"]
@@ -49,7 +48,6 @@ resource "aws_ecs_task_definition" "telemetry_task" {
   }
 }
 
-# ECS Fargate Service
 resource "aws_ecs_service" "telemetry_service" {
   name            = "smart-helmet-telemetry-service"
   cluster         = data.aws_ssm_parameter.ecs_cluster_name.value

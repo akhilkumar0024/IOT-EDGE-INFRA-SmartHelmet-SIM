@@ -1,4 +1,3 @@
-# 1. Telemetry Queue and DLQ
 resource "aws_sqs_queue" "telemetry_queue" {
   name = var.telemetry_queue_name
 
@@ -29,7 +28,6 @@ resource "aws_sqs_queue_redrive_allow_policy" "telemetry_dlq_redrive" {
   })
 }
 
-# 2. Control Queue and DLQ
 resource "aws_sqs_queue" "control_queue" {
   name = var.control_queue_name
 
@@ -60,7 +58,6 @@ resource "aws_sqs_queue_redrive_allow_policy" "control_dlq_redrive" {
   })
 }
 
-# 3. LWT Queue and DLQ
 resource "aws_sqs_queue" "lwt_queue" {
   name = var.lwt_queue_name
 
@@ -91,7 +88,6 @@ resource "aws_sqs_queue_redrive_allow_policy" "lwt_dlq_redrive" {
   })
 }
 
-# 4. Crash Queue and DLQ
 resource "aws_sqs_queue" "crash_queue" {
   name = var.crash_queue_name
 
@@ -122,7 +118,6 @@ resource "aws_sqs_queue_redrive_allow_policy" "crash_dlq_redrive" {
   })
 }
 
-# 5. Alert Queue and DLQ
 resource "aws_sqs_queue" "alert_queue" {
   name = var.alert_queue_name
 
@@ -153,7 +148,6 @@ resource "aws_sqs_queue_redrive_allow_policy" "alert_dlq_redrive" {
   })
 }
 
-# 6. Override Queue and DLQ
 resource "aws_sqs_queue" "override_queue" {
   name = var.override_queue_name
 

@@ -1,9 +1,7 @@
-# 1. Certificate for IoT Simulator Devices
 resource "aws_iot_certificate" "simulator_certificate" {
   active = true
 }
 
-# 2. IoT Policy for Device Simulator
 resource "aws_iot_policy" "simulator_policy" {
   name = "smart-helmet-simulator-policy"
 
@@ -39,13 +37,11 @@ resource "aws_iot_policy" "simulator_policy" {
   })
 }
 
-# 3. Attach Policy to Certificate
 resource "aws_iot_policy_attachment" "simulator_policy_attachment" {
   policy = aws_iot_policy.simulator_policy.name
   target = aws_iot_certificate.simulator_certificate.arn
 }
 
-# 4. Save Keys securely to AWS SSM for simulator/edge client use
 resource "aws_ssm_parameter" "iot_private_key" {
   name        = "/smart-helmet/simulator/private_key"
   description = "Private key for the IoT Simulator"
@@ -60,7 +56,6 @@ resource "aws_ssm_parameter" "iot_certificate_pem" {
   value       = aws_iot_certificate.simulator_certificate.certificate_pem
 }
 
-# 5. IAM Role to allow IoT Core to forward messages to SQS Queues
 resource "aws_iam_role" "iot_sqs_role" {
   name = "smart-helmet-iot-sqs-access-role"
 
@@ -82,7 +77,6 @@ resource "aws_iam_role" "iot_sqs_role" {
   }
 }
 
-# 6. IAM Policy for IoT to SQS
 resource "aws_iam_policy" "iot_sqs_policy" {
   name = "smart-helmet-iot-sqs-access-policy"
 
@@ -108,8 +102,6 @@ resource "aws_iam_role_policy_attachment" "iot_sqs_attach" {
   policy_arn = aws_iam_policy.iot_sqs_policy.arn
 }
 
-# 7. IoT Topic Rules
-# Rule 1: Telemetry Data
 resource "aws_iot_topic_rule" "telemetry_rule" {
   name        = "iot_telemetry_data_rule"
   description = "Routes telemetry data to Telemetry Queue"
@@ -124,7 +116,6 @@ resource "aws_iot_topic_rule" "telemetry_rule" {
   }
 }
 
-# Rule 2: Override Alert
 resource "aws_iot_topic_rule" "override_rule" {
   name        = "iot_override_alert_rule"
   description = "Routes override MQTT messages to Override Queue"
@@ -139,7 +130,6 @@ resource "aws_iot_topic_rule" "override_rule" {
   }
 }
 
-# Rule 3: Last Will and Testament (LWT)
 resource "aws_iot_topic_rule" "lwt_rule" {
   name        = "iot_lwt_rule"
   description = "Routes LWT MQTT messages to LWT Queue"
@@ -154,7 +144,6 @@ resource "aws_iot_topic_rule" "lwt_rule" {
   }
 }
 
-# Rule 4: Control (Graceful shutdown, low battery)
 resource "aws_iot_topic_rule" "control_rule" {
   name        = "iot_control_rule"
   description = "Routes control MQTT messages to Control Queue"

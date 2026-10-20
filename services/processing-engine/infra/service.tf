@@ -1,4 +1,3 @@
-# ECS Task Definition for Processing Engine
 resource "aws_ecs_task_definition" "processing_task" {
   family                   = "smart-helmet-processing-task"
   requires_compatibilities = ["FARGATE"]
@@ -53,7 +52,6 @@ resource "aws_ecs_task_definition" "processing_task" {
   }
 }
 
-# ECS Fargate Service
 resource "aws_ecs_service" "processing_service" {
   name            = "smart-helmet-processing-service"
   cluster         = data.aws_ssm_parameter.ecs_cluster_name.value

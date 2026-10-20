@@ -6,7 +6,7 @@ name: Lint & Static Checks
 #
 # Note it runs on push as well as PR. Because this repo commits straight to
 # main, the push run is advisory - the gate only actually blocks once branch
-# protection is enabled (see TODO §3.6).
+# protection is enabled.
 
 on:
   pull_request:
@@ -101,7 +101,7 @@ jobs:
           ./trivy --version
 
       # Accepted findings are recorded in .trivyignore (auto-discovered), each
-      # tied to the TODO item or ADR that justifies it. Anything new fails.
+      # with the reason it is accepted. Anything new fails.
       - name: Scan Terraform and Dockerfiles
         run: ./trivy config --severity HIGH,CRITICAL --exit-code 1 --skip-dirs .terraform .
 
