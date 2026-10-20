@@ -61,6 +61,20 @@ resource "aws_ecs_service" "processing_service" {
   desired_count   = var.desired_count
   launch_type     = "FARGATE"
 
+  # Roll back automatically if the new tasks never become healthy, rather than
+  # leaving the service stuck on a failed deployment until a human intervenes.
+  # The task definition carries a container health check, so this detects
+  # "started but unhealthy", not just "failed to launch".
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  # Keep the current tasks healthy while the new ones prove themselves, and
+  # allow up to double the task count during a rollout.
+  deployment_minimum_healthy_percent = 100
+  deployment_maximum_percent         = 200
+
   network_configuration {
     subnets          = split(",", data.aws_ssm_parameter.public_subnet_ids.value)
     security_groups  = [data.aws_ssm_parameter.ecs_security_group_id.value]
