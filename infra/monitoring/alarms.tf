@@ -243,3 +243,106 @@ resource "aws_cloudwatch_metric_alarm" "ecs_memory_alarm" {
     ClusterName = data.aws_ssm_parameter.ecs_cluster_name.value
   }
 }
+
+# The cluster-level alarm above averages across all three services, so one
+# service running hot is invisible in it, and nothing at all fires when a
+# service is simply not running.
+locals {
+  ecs_services = {
+    "telemetry"  = "smart-helmet-telemetry-service"
+    "processing" = "smart-helmet-processing-service"
+    "alerts"     = "smart-helmet-alerts-service"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "ecs_tasks_below_desired" {
+  for_each            = local.ecs_services
+  alarm_name          = "smart-helmet-${each.key}-tasks-below-desired"
+  alarm_description   = "Alarm when ${each.key} runs fewer tasks than its desired count"
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  alarm_actions       = [aws_sns_topic.infra_alerts.arn]
+
+  # Three consecutive minutes: a scale-out raises DesiredTaskCount before the
+  # new tasks reach RUNNING, so a single-period alarm would fire on every
+  # routine scale-out. A real outage stays below desired indefinitely.
+  evaluation_periods  = 3
+  datapoints_to_alarm = 3
+
+  metric_query {
+    id          = "e1"
+    expression  = "desired - running"
+    label       = "TasksBelowDesired"
+    return_data = true
+  }
+
+  metric_query {
+    id = "running"
+    metric {
+      metric_name = "RunningTaskCount"
+      namespace   = "ECS/ContainerInsights"
+      period      = 60
+      stat        = "Average"
+      dimensions = {
+        ClusterName = data.aws_ssm_parameter.ecs_cluster_name.value
+        ServiceName = each.value
+      }
+    }
+  }
+
+  metric_query {
+    id = "desired"
+    metric {
+      metric_name = "DesiredTaskCount"
+      namespace   = "ECS/ContainerInsights"
+      period      = 60
+      stat        = "Average"
+      dimensions = {
+        ClusterName = data.aws_ssm_parameter.ecs_cluster_name.value
+        ServiceName = each.value
+      }
+    }
+  }
+}
+
+# Autoscaling targets SQS depth, not CPU, so a saturated service that cannot
+# scale further has no other signal.
+resource "aws_cloudwatch_metric_alarm" "ecs_cpu_saturation" {
+  for_each            = local.ecs_services
+  alarm_name          = "smart-helmet-${each.key}-cpu-saturation"
+  alarm_description   = "Alarm when ${each.key} averages over 80% CPU for 5 minutes"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 5
+  datapoints_to_alarm = 5
+  threshold           = 80
+  namespace           = "AWS/ECS"
+  metric_name         = "CPUUtilization"
+  period              = 60
+  statistic           = "Average"
+  alarm_actions       = [aws_sns_topic.infra_alerts.arn]
+
+  dimensions = {
+    ClusterName = data.aws_ssm_parameter.ecs_cluster_name.value
+    ServiceName = each.value
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "ecs_service_memory_alarm" {
+  for_each            = local.ecs_services
+  alarm_name          = "smart-helmet-${each.key}-memory-saturation"
+  alarm_description   = "Alarm when ${each.key} averages over 90% memory for 5 minutes"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 5
+  datapoints_to_alarm = 5
+  threshold           = 90
+  namespace           = "AWS/ECS"
+  metric_name         = "MemoryUtilization"
+  period              = 60
+  statistic           = "Average"
+  alarm_actions       = [aws_sns_topic.infra_alerts.arn]
+
+  dimensions = {
+    ClusterName = data.aws_ssm_parameter.ecs_cluster_name.value
+    ServiceName = each.value
+  }
+}
