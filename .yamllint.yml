@@ -1,0 +1,28 @@
+# yamllint configuration for GitHub Actions workflows.
+#
+# The stock ruleset produced 47 findings here, all of them GitHub-specific
+# quirks rather than defects:
+#
+#   truthy         (8)  - the top-level `on:` key is parsed as the boolean True
+#                         by a YAML 1.1 parser. GitHub requires that exact key,
+#                         so the warning is pure noise.
+#   document-start (8)  - a leading `---` adds nothing to a workflow file.
+#   line-length    (31) - role ARNs and `if:` expressions are legitimately
+#                         long; the longest line in the repo is 140 chars.
+#
+# Everything else passes the stock ruleset, so no other rules are relaxed.
+
+extends: default
+
+# `yamllint .` is run in CI; these paths must not be traversed locally, where
+# they exist but are not tracked by git.
+ignore: |
+  .terraform/
+  .venv/
+  .git/
+
+rules:
+  truthy: disable
+  document-start: disable
+  line-length:
+    max: 160

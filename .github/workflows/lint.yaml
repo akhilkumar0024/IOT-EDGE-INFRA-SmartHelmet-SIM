@@ -1,0 +1,92 @@
+name: Lint & Static Checks
+
+# Deliberately has no path filters: this is the one workflow that validates the
+# workflow files themselves, so it must run when they change. It is also cheap
+# (no AWS, no Docker builds).
+#
+# Note it runs on push as well as PR. Because this repo commits straight to
+# main, the push run is advisory - the gate only actually blocks once branch
+# protection is enabled (see TODO §3.6).
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only: nothing here assumes an AWS role or mutates anything.
+permissions:
+  contents: read
+
+# Safe to cancel in progress here - this workflow holds no state lock.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Pinned so CI lints identically to a local run.
+      - name: Install ruff
+        run: pip install "ruff==0.17.1"
+
+      - name: Lint
+        run: ruff check services simulator
+
+      - name: Format check
+        run: ruff format --check services simulator
+
+  dockerfiles:
+    name: Dockerfiles (hadolint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install hadolint
+        run: |
+          curl -fsSL -o /usr/local/bin/hadolint \
+            https://github.com/hadolint/hadolint/releases/download/v2.15.1/hadolint-Linux-x86_64
+          chmod +x /usr/local/bin/hadolint
+          hadolint --version
+
+      - name: Lint Dockerfiles
+        run: hadolint services/*/Dockerfile
+
+  workflows:
+    name: Workflows (actionlint + yamllint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install actionlint
+        run: |
+          curl -fsSL -o actionlint.tar.gz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          tar -xzf actionlint.tar.gz actionlint
+          ./actionlint --version
+
+      - name: actionlint
+        run: ./actionlint -color
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: yamllint
+        run: |
+          pip install "yamllint==1.38.0"
+          yamllint .
