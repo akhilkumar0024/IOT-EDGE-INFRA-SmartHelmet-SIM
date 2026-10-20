@@ -1,0 +1,31 @@
+# Python linting/formatting configuration.
+#
+# Deliberately a small, high-signal rule set rather than "everything". The
+# broader ruff defaults were tried first and produced 90 findings, of which 66
+# were LOG015 (root-logger calls) in what are standalone entrypoint scripts —
+# noise, not defects. The rules below catch things that are actually wrong.
+
+[tool.ruff]
+line-length = 100
+# Matches the runtime in services/*/Dockerfile (python:3.11-slim).
+target-version = "py311"
+extend-exclude = [".venv", "**/.terraform"]
+
+[tool.ruff.lint]
+select = [
+  "E4", # import placement (duplicate imports, imports not at top of file)
+  "E7", # genuine runtime problems (e.g. comparison to None with ==)
+  "E9", # syntax/IO errors — would fail at runtime
+  "F",  # pyflakes: unused imports/variables, undefined names
+  "I",  # import ordering
+]
+
+# Explicitly NOT enabled, with reasons, so this is a decision rather than an
+# oversight:
+#   LOG015  - these are standalone scripts; using the root logger is fine
+#   BLE001  - `except Exception` in the poll loops is intentional: a single bad
+#             message must not kill the consumer
+#   RUF010, FURB157 - stylistic only, no behavioural value in this codebase
+
+[tool.ruff.format]
+quote-style = "double"

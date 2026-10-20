@@ -1,13 +1,13 @@
-import os
-import time
 import json
 import logging
-import threading
-import boto3
+import os
+import time
 import urllib.request
+
+import boto3
 from AWSIoTPythonSDK.MQTTLib import AWSIoTMQTTClient
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 
 HELMET_ID = "HELMET-SIM-001"
 IOT_ENDPOINT_URL = os.getenv("IOT_ENDPOINT_URL")
@@ -21,37 +21,43 @@ STATUS_TOPIC = f"helmet/{HELMET_ID}/alert/status"
 CONTROL_TOPIC = f"helmet/{HELMET_ID}/control"
 active_incident = None
 
+
 def download_certs():
     logging.info("Fetching IoT Certificates from SSM Parameter Store...")
-    ssm = boto3.client('ssm', region_name=AWS_REGION)
-    
+    ssm = boto3.client("ssm", region_name=AWS_REGION)
+
     # Fetch Private Key
     res_key = ssm.get_parameter(Name="/smart-helmet/simulator/private_key", WithDecryption=True)
     with open("private.pem.key", "w") as f:
-        f.write(res_key['Parameter']['Value'])
-        
+        f.write(res_key["Parameter"]["Value"])
+
     # Fetch Certificate
-    res_cert = ssm.get_parameter(Name="/smart-helmet/simulator/certificate_pem", WithDecryption=True)
+    res_cert = ssm.get_parameter(
+        Name="/smart-helmet/simulator/certificate_pem", WithDecryption=True
+    )
     with open("certificate.pem.crt", "w") as f:
-        f.write(res_cert['Parameter']['Value'])
-        
+        f.write(res_cert["Parameter"]["Value"])
+
     # Download AWS Root CA
     if not os.path.exists("AmazonRootCA1.pem"):
         logging.info("Downloading AWS Root CA...")
-        urllib.request.urlretrieve("https://www.amazontrust.com/repository/AmazonRootCA1.pem", "AmazonRootCA1.pem")
+        urllib.request.urlretrieve(
+            "https://www.amazontrust.com/repository/AmazonRootCA1.pem", "AmazonRootCA1.pem"
+        )
+
 
 def custom_callback(client, userdata, message):
     global active_incident
     try:
-        payload = json.loads(message.payload.decode('utf-8'))
-        action = payload.get('action', 'UNKNOWN')
-        msg_text = payload.get('message', '')
-        
+        payload = json.loads(message.payload.decode("utf-8"))
+        action = payload.get("action", "UNKNOWN")
+        msg_text = payload.get("message", "")
+
         print("\n" + "=" * 65)
         if action == "START_COUNTDOWN":
             active_incident = {
                 "incident_id": payload.get("incident_id"),
-                "incident_timestamp": payload.get("incident_timestamp")
+                "incident_timestamp": payload.get("incident_timestamp"),
             }
             print(f"🚨 HELMET HUD ALERT DISPLAYED! [{action}]")
             print(f"   Message : {msg_text}")
@@ -64,16 +70,13 @@ def custom_callback(client, userdata, message):
             print(f"📬 CLOUD STATUS NOTIFICATION: [{action}]")
             print(f"   Message : {msg_text}")
         print("=" * 65 + "\n")
-    except Exception as e:
+    except Exception:
         logging.info(f"Received raw message on {message.topic}: {message.payload.decode('utf-8')}")
+
 
 def send_control_status(client, status):
     """Publish a device control message (ONLINE / GRACEFUL_SHUTDOWN) to AWS IoT Core."""
-    payload = {
-        "status": status,
-        "helmet_id": HELMET_ID,
-        "timestamp": int(time.time())
-    }
+    payload = {"status": status, "helmet_id": HELMET_ID, "timestamp": int(time.time())}
     client.publish(CONTROL_TOPIC, json.dumps(payload), 1)
     logging.info(f"Published {status} to {CONTROL_TOPIC}")
 
@@ -91,7 +94,9 @@ def main():
     myMQTTClient.configureCredentials("AmazonRootCA1.pem", "private.pem.key", "certificate.pem.crt")
 
     # Configure LWT (Last Will and Testament)
-    lwt_payload = json.dumps({"helmet_id": HELMET_ID, "status": "offline", "timestamp": int(time.time())})
+    lwt_payload = json.dumps(
+        {"helmet_id": HELMET_ID, "status": "offline", "timestamp": int(time.time())}
+    )
     myMQTTClient.configureLastWill(LWT_TOPIC, lwt_payload, 1)
 
     logging.info("Connecting to AWS IoT Core...")
@@ -109,27 +114,35 @@ def main():
         now = int(time.time())
         num_points = 5 if crash_flag else 10
         start_ts = now - num_points + 1
-        
+
         telemetry_points = []
         for i in range(num_points):
             ts = start_ts + i
             is_last_point_crash = (i == num_points - 1) and crash_flag
-            telemetry_points.append({
-                "timestamp": ts,
-                "accelerometer": {"x": 8.5 if is_last_point_crash else 0.1, "y": 9.1 if is_last_point_crash else 0.2, "z": 12.0 if is_last_point_crash else 9.8},
-                "speed": speed if not is_last_point_crash else (0.0 if speed > 10 else speed),
-                "crash_flag": is_last_point_crash,
-                "location": "Latitude: 19.0760, Longitude: 72.8777"
-            })
-            
+            telemetry_points.append(
+                {
+                    "timestamp": ts,
+                    "accelerometer": {
+                        "x": 8.5 if is_last_point_crash else 0.1,
+                        "y": 9.1 if is_last_point_crash else 0.2,
+                        "z": 12.0 if is_last_point_crash else 9.8,
+                    },
+                    "speed": speed if not is_last_point_crash else (0.0 if speed > 10 else speed),
+                    "crash_flag": is_last_point_crash,
+                    "location": "Latitude: 19.0760, Longitude: 72.8777",
+                }
+            )
+
         payload = {
             "helmet_id": HELMET_ID,
             "type": "crash_batch" if crash_flag else "no_crash_batch",
             "batch_timestamp": now,
-            "telemetry": telemetry_points
+            "telemetry": telemetry_points,
         }
         myMQTTClient.publish(TELEMETRY_TOPIC, json.dumps(payload), 1)
-        logging.info(f"Sent Telemetry Batch ({payload['type']}) -> Points: {len(telemetry_points)} | Speed: {speed} mph | Crash: {crash_flag}")
+        logging.info(
+            f"Sent Telemetry Batch ({payload['type']}) -> Points: {len(telemetry_points)} | Speed: {speed} mph | Crash: {crash_flag}"
+        )
 
     def send_override(action="cancel"):
         payload = {
@@ -137,7 +150,9 @@ def main():
             "action": action,
             "timestamp": int(time.time()),
             "incident_id": active_incident.get("incident_id") if active_incident else None,
-            "incident_timestamp": active_incident.get("incident_timestamp") if active_incident else None
+            "incident_timestamp": active_incident.get("incident_timestamp")
+            if active_incident
+            else None,
         }
         myMQTTClient.publish(OVERRIDE_TOPIC, json.dumps(payload), 1)
         logging.info(f"Sent Override -> Action: {action}")
@@ -151,27 +166,27 @@ def main():
             print("4. Press Cancel Button (action: cancel)")
             print("5. Press False Positive Override Button (action: FP_OVERRIDE)")
             print("6. Exit")
-            
+
             choice = input("Select an option: ")
-            
-            if choice == '1':
+
+            if choice == "1":
                 send_telemetry(45.0, False)
-            elif choice == '2':
+            elif choice == "2":
                 send_telemetry(65.5, True)
                 print("Crash simulated! Waiting for countdown from cloud...")
-            elif choice == '3':
+            elif choice == "3":
                 send_telemetry(5.0, True)
                 print("Helmet dropped! Simulating false positive. Waiting for cloud...")
-            elif choice == '4':
+            elif choice == "4":
                 send_override("cancel")
-            elif choice == '5':
+            elif choice == "5":
                 send_override("FP_OVERRIDE")
-            elif choice == '6':
+            elif choice == "6":
                 send_control_status(myMQTTClient, "GRACEFUL_SHUTDOWN")
                 break
             else:
                 print("Invalid choice.")
-                
+
             time.sleep(1)
 
     except KeyboardInterrupt:
@@ -181,5 +196,6 @@ def main():
     logging.info("Disconnecting...")
     myMQTTClient.disconnect()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
