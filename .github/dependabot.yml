@@ -1,0 +1,163 @@
+# Dependabot configuration.
+#
+# Actions are pinned to commit SHAs (TODO §3.1). That is only maintainable if
+# something advances the pins, so Dependabot is a prerequisite for that change
+# rather than an optional extra - without it the pins rot silently.
+#
+# Dependabot understands `uses: owner/repo@<sha> # vX.Y.Z` and rewrites both the
+# SHA and the comment, so the version stays readable in the diff.
+#
+# Weekly, with a low open-PR limit per ecosystem: this is a portfolio project,
+# not something with an on-call rota, and a wall of dependency PRs is worse than
+# a slow update cadence.
+
+version: 2
+
+updates:
+  # ---------------------------------------------------------------- actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(ci)"
+    labels:
+      - dependencies
+    open-pull-requests-limit: 5
+
+  # ------------------------------------------------------------------- pip
+  # One entry per requirements.txt - Dependabot resolves a single directory.
+  - package-ecosystem: pip
+    directory: /services/telemetry-processor/src
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: pip
+    directory: /services/processing-engine/src
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: pip
+    directory: /services/alert-handler/src
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    open-pull-requests-limit: 3
+
+  # ---------------------------------------------------------------- docker
+  # Tracks the base image tag in each Dockerfile (python:3.11-slim).
+  - package-ecosystem: docker
+    directory: /services/telemetry-processor
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: docker
+    directory: /services/processing-engine
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: docker
+    directory: /services/alert-handler
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    open-pull-requests-limit: 3
+
+  # ------------------------------------------------------------- terraform
+  # One entry per stack; the hashicorp/aws provider is pinned with "~> 5.0" in
+  # every provider.tf.
+  - package-ecosystem: terraform
+    directory: /infra/platform
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: terraform
+    directory: /infra/shared-data
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: terraform
+    directory: /infra/messaging
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: terraform
+    directory: /infra/monitoring
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: terraform
+    directory: /services/telemetry-processor/infra
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: terraform
+    directory: /services/processing-engine/infra
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: terraform
+    directory: /services/alert-handler/infra
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - dependencies
+    open-pull-requests-limit: 3

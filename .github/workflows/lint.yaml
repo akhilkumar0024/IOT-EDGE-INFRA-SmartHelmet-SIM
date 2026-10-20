@@ -26,20 +26,20 @@ concurrency:
 
 jobs:
   python:
-    name: Python (ruff)
+    name: Python (ruff + pip-audit)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 
       # Pinned so CI lints identically to a local run.
-      - name: Install ruff
-        run: pip install "ruff==0.17.1"
+      - name: Install tools
+        run: pip install "ruff==0.17.1" "pip-audit==2.10.1"
 
       - name: Lint
         run: ruff check services simulator
@@ -47,12 +47,21 @@ jobs:
       - name: Format check
         run: ruff format --check services simulator
 
+      # Dependabot opens the PRs; pip-audit is what fails the build if a known
+      # vulnerability is actually reachable from these requirements.
+      - name: Dependency audit
+        run: |
+          for r in services/*/src/requirements.txt; do
+            echo "--- $r"
+            pip-audit --strict -r "$r"
+          done
+
   dockerfiles:
     name: Dockerfiles (hadolint)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install hadolint
         run: |
@@ -69,7 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # shellcheck is pre-installed on the ubuntu runners, but it is only ever
       # reached indirectly through actionlint's `run:` analysis. Standalone
@@ -77,12 +86,52 @@ jobs:
       - name: shellcheck
         run: shellcheck -s bash Scripts/*.sh
 
+  iac:
+    name: IaC (trivy config)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install trivy
+        run: |
+          curl -fsSL -o trivy.tar.gz \
+            https://github.com/aquasecurity/trivy/releases/download/v0.76.0/trivy_0.76.0_Linux-64bit.tar.gz
+          tar -xzf trivy.tar.gz trivy
+          ./trivy --version
+
+      # Accepted findings are recorded in .trivyignore (auto-discovered), each
+      # tied to the TODO item or ADR that justifies it. Anything new fails.
+      - name: Scan Terraform and Dockerfiles
+        run: ./trivy config --severity HIGH,CRITICAL --exit-code 1 --skip-dirs .terraform .
+
+  secrets:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Full history: the interesting leaks are the ones already committed,
+          # not the ones in the working tree.
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          curl -fsSL -o gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks version
+
+      - name: Scan git history
+        run: ./gitleaks git --no-banner --redact --exit-code 1 .
+
   workflows:
     name: Workflows (actionlint + yamllint)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install actionlint
         run: |
@@ -91,11 +140,13 @@ jobs:
           tar -xzf actionlint.tar.gz actionlint
           ./actionlint --version
 
+      # shellcheck is present on the runner, so actionlint will analyse every
+      # `run:` block as well as the workflow structure.
       - name: actionlint
         run: ./actionlint -color
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 

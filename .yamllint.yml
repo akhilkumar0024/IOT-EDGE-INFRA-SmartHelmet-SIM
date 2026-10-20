@@ -26,3 +26,8 @@ rules:
   document-start: disable
   line-length:
     max: 160
+  # Action pins follow the universal convention `uses: owner/repo@<sha> # v1.2.3`
+  # with a single space before the comment, and Dependabot rewrites these lines
+  # in that same style. Requiring two spaces would fight both.
+  comments:
+    min-spaces-from-content: 1

@@ -1,0 +1,44 @@
+# Trivy misconfiguration baseline.
+#
+# Everything NOT listed here fails the gate, so this file is a record of
+# accepted findings - not a way to turn scanning off. Each entry names the TODO
+# item that will remove it, or the ADR that makes it deliberate.
+#
+# Re-check with:
+#   trivy config --severity HIGH,CRITICAL --skip-dirs .terraform .
+
+# SQS queues are not encrypted with a KMS key. 12 queues.
+# Real finding. Tracked as TODO §5.4.
+# Note for whoever fixes it: enabling encryption also requires kms:Decrypt /
+# kms:GenerateDataKey on the IoT topic-rule role (producer) and on all three
+# ECS task roles (consumers). AWS-managed keys (alias/aws/sqs) have no key
+# charge, only API-call charges.
+AWS-0096
+
+# SNS topics are not encrypted. 2 topics.
+# Real finding. Tracked as TODO §5.4.
+AWS-0095
+
+# The shared security group allows unrestricted egress (0.0.0.0/0, all
+# protocols). Real finding. Tracked as TODO §5.9 - it needs a full test cycle
+# before tightening, because the services reach IoT, SQS, DynamoDB, SSM,
+# CloudWatch, ECR and SES.
+AWS-0104
+
+# Subnets associate a public IP address on launch.
+# DELIBERATE, not a defect - see docs/adr/0001-public-subnets-and-gateway-endpoints.md.
+# The tasks have a zero-ingress security group, so there is no inbound path;
+# the public IP exists purely so egress works without a NAT gateway. Changing
+# this would add fixed ongoing cost for no security gain.
+AWS-0164
+
+# ---------------------------------------------------------------- image CVEs
+# Both are build/packaging tools bundled inside python:3.11-slim, not runtime
+# dependencies of these services - the containers only ever import boto3.
+# Neither is cleanly fixable: `pip install --upgrade pip setuptools wheel` was
+# tried and produced FOUR fixable CVEs instead of two (it dragged in newer
+# urllib3/msgpack/setuptools issues), so the upgrade was not adopted.
+# They clear when the base image rolls forward - Dependabot tracks the docker
+# ecosystem for exactly that.
+CVE-2026-23949
+CVE-2026-24049
