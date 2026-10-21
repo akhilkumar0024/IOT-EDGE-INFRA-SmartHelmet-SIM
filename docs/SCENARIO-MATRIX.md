@@ -93,7 +93,55 @@ standard `30 s`, false positive `5 s`, retrospective `300 s`.
 
 ## 4. What each scenario looks like in sequence
 
+```mermaid
+flowchart TD
+    A["processing-engine receives a crash event"] --> B{"hot-storage rows in the<br/>15 seconds before impact?"}
+    B -->|"none"| R["retrospective<br/>STD_CD status, 300s window"]
+    B -->|"found"| C{"peak speed above 10?"}
+    C -->|"yes"| S["STD_CD<br/>30s window"]
+    C -->|"no"| F["FP_CD<br/>5s window"]
+```
+
 ### 1A — standard, cancelled in time
+
+```mermaid
+flowchart LR
+    DEV((Helmet))
+    IOT[IoT Core]
+    TQ[telemetry-queue]
+    TP[telemetry-processor]
+    HS[(hot-storage)]
+    CQ[crash-queue]
+    PE[processing-engine]
+    AQ[alert-queue]
+    AH[alert-handler]
+    REG[(execution-registry)]
+    SFN["SmartHelmetAlertWorkflow<br/>Wait 30s"]
+    CS[(cold-storage)]
+    OQ[override-queue]
+
+    DEV -->|"crash batch"| IOT
+    IOT -->|"helmet/+/telemetry"| TQ
+    TQ --> TP
+    TP --> HS
+    TP -->|"crash event"| CQ
+    CQ --> PE
+    PE -->|"peak speed above 10, STD_CD"| AQ
+    AQ --> AH
+    AH -->|"lease STD_CD"| REG
+    AH -->|"StartExecution, wait 30s"| SFN
+    AH -->|"START_COUNTDOWN"| DEV
+
+    DEV -->|"CANCEL"| IOT
+    IOT -->|"helmet/+/alert/override"| OQ
+    OQ --> AH
+    AH -->|"status CANCELLED"| REG
+    AH -->|"DISMISS"| DEV
+
+    SFN -->|"wakes, reads lease"| REG
+    SFN -->|"INCIDENT_CANCELLED"| CS
+    SFN -->|"delete lease"| REG
+```
 
 `telemetry-processor` writes the batch to hot storage and, because
 `crash_flag` is true, forwards a crash event. `processing-engine` reads the
@@ -114,6 +162,32 @@ If nothing arrives, the workflow sets the lease to `CONFIRMED`, writes
 
 ### 1B — cancel after the window
 
+```mermaid
+flowchart LR
+    DEV((Helmet))
+    IOT[IoT Core]
+    OQ[override-queue]
+    AH[alert-handler]
+    REG[(execution-registry)]
+    CS[(cold-storage)]
+    SFN1["SmartHelmetAlertWorkflow<br/>already ended at 30s"]
+    SFN2["SmartHelmetReconciliationWorkflow"]
+    SES[SES]
+
+    SFN1 -->|"INCIDENT_CONFIRMED"| CS
+    SFN1 -->|"email: incident confirmed"| SES
+
+    DEV -->|"CANCEL, late"| IOT
+    IOT -->|"helmet/+/alert/override"| OQ
+    OQ --> AH
+    AH -->|"no active lease"| REG
+    AH -->|"look up by helmetId + incident_timestamp"| CS
+    CS -->|"incidentId matches"| AH
+    AH -->|"StartExecution<br/>is_reconcilable = elapsed 300s or less"| SFN2
+    SFN2 -->|"RESOLVED_BY_LATE_CANCEL"| CS
+    SFN2 -->|"email: stand down"| SES
+```
+
 By this point `handle_cancel` finds no active lease. It falls back to cold
 storage, looks up the row by `(helmetId, incident_timestamp)`, and — if the
 `incidentId` matches — starts `SmartHelmetReconciliationWorkflow` with
@@ -128,6 +202,61 @@ racing reconciliation loses the conditional write and exits silently — that is
 an expected outcome, not a failure.
 
 ### 2A / 2B — false positive
+
+```mermaid
+flowchart LR
+    DEV((Helmet))
+    IOT[IoT Core]
+    AQ[alert-queue]
+    AH[alert-handler]
+    REG[(execution-registry)]
+    SFN["SmartHelmetAlertWorkflow<br/>Wait 5s"]
+    CS[(cold-storage)]
+    OQ[override-queue]
+    SFN2["SmartHelmetAlertWorkflow<br/>new execution, Wait 30s"]
+    SES[SES]
+    EXIT(("SilentExit"))
+
+    DEV -->|"low-speed crash"| IOT
+    IOT -->|"helmet/+/telemetry"| AQ
+    AQ -->|"FP_CD"| AH
+    AH -->|"lease FP_CD"| REG
+    AH -->|"StartExecution, wait 5s"| SFN
+    AH -->|"START_COUNTDOWN"| DEV
+
+    SFN -->|"no override: DismissFalsePositive"| CS
+    SFN -->|"delete lease"| REG
+
+    DEV -->|"FP_OVERRIDE inside 5s"| IOT
+    IOT -->|"helmet/+/alert/override"| OQ
+    OQ --> AH
+    AH -->|"Case A: same owner, upgrade in place<br/>new incident id, STD_CD"| REG
+    AH -->|"StartExecution, wait 30s"| SFN2
+    SFN2 -->|"INCIDENT_CONFIRMED"| CS
+    SFN2 -->|"email"| SES
+    SFN -.->|"wakes, owner mismatch"| EXIT
+```
+
+```mermaid
+flowchart LR
+    DEV((Helmet))
+    IOT[IoT Core]
+    OQ[override-queue]
+    AH[alert-handler]
+    REG[(execution-registry)]
+    CS[(cold-storage)]
+    SFN["SmartHelmetAlertWorkflow<br/>Wait 30s"]
+    SES[SES]
+
+    DEV -->|"FP_OVERRIDE, after the 5s window"| IOT
+    IOT -->|"helmet/+/alert/override"| OQ
+    OQ --> AH
+    AH -->|"no lease held by anyone"| REG
+    AH -->|"Case B: fresh lease, STD_CD<br/>same incident_timestamp"| REG
+    AH -->|"StartExecution, wait 30s"| SFN
+    SFN -->|"INCIDENT_CONFIRMED overwrites<br/>the FALSE_POSITIVE_DISMISSED row"| CS
+    SFN -->|"email"| SES
+```
 
 A low-speed crash classifies as `FP_CD` with a **5-second** countdown, so the
 rider has five seconds to say "I'm fine".
@@ -151,6 +280,26 @@ rider has five seconds to say "I'm fine".
 > rather than appended. The audit trail keeps the final state, not the history.
 
 ### LWT — genuine disconnect vs graceful shutdown
+
+```mermaid
+flowchart LR
+    DEV((Helmet))
+    IOT[IoT Core]
+    LQ[lwt-queue]
+    PE[processing-engine]
+    DS[(device-status)]
+    Q{"GRACEFUL_SHUTDOWN<br/>within 900s?"}
+    AQ["alert-queue<br/>STD_CD"]
+    IGN(("ignored"))
+
+    DEV -->|"LWT on disconnect"| IOT
+    IOT -->|"helmet/+/lwt"| LQ
+    LQ --> PE
+    PE --> DS
+    DS --> Q
+    Q -->|"yes"| IGN
+    Q -->|"no"| AQ
+```
 
 The helmet's last-will message lands in `lwt-queue`. `processing-engine` checks
 `device-status`: if the device recorded `GRACEFUL_SHUTDOWN` less than
