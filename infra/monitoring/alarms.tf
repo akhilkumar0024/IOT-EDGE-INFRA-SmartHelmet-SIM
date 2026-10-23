@@ -39,10 +39,13 @@ resource "aws_cloudwatch_metric_alarm" "dlq_alarms" {
   comparison_operator = "GreaterThanThreshold"
   threshold           = 0
   evaluation_periods  = 1
-  period              = 60
-  namespace           = "AWS/SQS"
-  metric_name         = "ApproximateNumberOfMessagesVisible"
-  statistic           = "Sum"
+  # SQS publishes its queue metrics every 5 minutes, so a 1-minute period mostly
+  # evaluates windows with no fresh data - the alarm took ~5 minutes both to fire
+  # and to clear. Matching the metric's own resolution makes the state honest.
+  period      = 300
+  namespace   = "AWS/SQS"
+  metric_name = "ApproximateNumberOfMessagesVisible"
+  statistic   = "Sum"
 
   dimensions = {
     QueueName = each.value
@@ -191,11 +194,12 @@ resource "aws_cloudwatch_metric_alarm" "sqs_old_message_alarm" {
   evaluation_periods  = 1
   metric_name         = "ApproximateAgeOfOldestMessage"
   namespace           = "AWS/SQS"
-  period              = 60
-  statistic           = "Maximum"
-  threshold           = 600
-  alarm_description   = "Alarm if a message sits in the queue for more than 10 minutes"
-  alarm_actions       = [aws_sns_topic.infra_alerts.arn]
+  # Same 5-minute metric resolution as the DLQ alarms above.
+  period            = 300
+  statistic         = "Maximum"
+  threshold         = 600
+  alarm_description = "Alarm if a message sits in the queue for more than 10 minutes"
+  alarm_actions     = [aws_sns_topic.infra_alerts.arn]
 
   dimensions = {
     QueueName = each.value
