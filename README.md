@@ -182,9 +182,27 @@ cd ../../services/telemetry-processor/infra && terraform init && terraform apply
 cd ../../processing-engine/infra            && terraform init && terraform apply
 cd ../../alert-handler/infra                && terraform init && terraform apply
 
-# 6 — Push a first image for each service, then let CI take over
-bash Scripts/deploy_images.sh
+# 6 — Deploy an image for each service
+#     There is nothing to push yet, and Terraform's task definition points at a
+#     tag that is never published, so the services will be failing at this point.
+#     Trigger each service's workflow by hand:
+#       GitHub → Actions → "Deploy <Service> Service" → Run workflow → main
+#     Do all three (telemetry-processor, processing-engine, alert-handler). They
+#     run in parallel. Each builds, pushes, rewrites the task definition's image
+#     reference and rolls the service onto it.
 ```
+
+**Step 6 is not optional and not automatic.** No workflow fires on its own here:
+the `svc-*` triggers are `push` to `main` under `services/<name>/**` *excluding*
+`infra/**`, and a from-scratch rebuild changes nothing in git. The task
+definition Terraform creates points at `:bootstrap`, a tag that by design is
+never pushed — so the tasks fail loudly until a workflow rewrites the image
+reference. That is deliberate: a placeholder image would leave the service
+looking healthy while doing nothing.
+
+`Scripts/deploy_images.sh` does **not** substitute for this. It builds and pushes
+images, but pushing does not make ECS run them — ECS only pulls when a new task
+starts, which requires a new task definition revision. See *Known gaps*.
 
 ### Traps in this sequence
 
@@ -205,10 +223,11 @@ bash Scripts/deploy_images.sh
    ```
 
 2. **Step 5 creates ECR repositories and ECS services before any image exists.**
-   The tasks will start, fail to pull, and cycle until step 6 gives them
-   something to pull. This is expected on a first bootstrap, not a broken deploy
-   — the circuit breaker will roll the deployment back and the service will sit
-   at zero running tasks until the first image lands.
+   Terraform's task definition references `:bootstrap`, which is never pushed, so
+   the services come up and immediately fail to pull. The circuit breaker rolls
+   the deployment back and the service sits below its desired count. **This is
+   expected** — it is the loud failure described in step 6, and the
+   `tasks-below-desired` alarm will fire while it lasts.
 
 3. **`infra/platform` must be applied before anything else.** It creates the
    VPC, the cluster, the execution role and the OIDC provider that every other
@@ -423,6 +442,18 @@ Recorded deliberately rather than discovered later.
   it is a trap when scripting against the repository name.
 - **`IsReconciliable` vs `is_reconcilable`.** The state name and the input field
   differ by one letter. Renaming either alone silently breaks the Choice.
+- **`Scripts/deploy_images.sh` cannot do what its header claims.** It says it
+  exists to bring up a service that has no image, but pushing an image does not
+  make ECS run it — ECS only pulls when a **new task starts**, which requires a
+  new task definition revision. Its pushed tag (`<sha>-manual-<epoch>`) matches
+  nothing the task definition references. It is only useful if GitHub Actions is
+  unavailable, and even then it must be followed by a manual
+  `aws ecs register-task-definition` + `update-service`.
+- **The three service workflows are ~identical.** `svc-telemetry`,
+  `svc-processing` and `svc-alerts` are 91 lines each and differ only in five
+  values (path, ECR repo, task family, container name, ECS service) — about 180
+  lines of duplication, with the usual consequence that a fix must be applied
+  three times.
 - **`required_version` understates the real requirement.** All seven backends set
   `use_lockfile = true`, which needs Terraform ≥ 1.10, but every stack still
   declares `>= 1.5.0`. On 1.5–1.9 the backend option is rejected outright.
