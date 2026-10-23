@@ -21,6 +21,13 @@ resource "aws_dynamodb_table" "hot_storage" {
     enabled        = true
   }
 
+  # Continuous backup, 35-day restore window. On-demand backup storage is
+  # billed per GB, so this is near-free at this table size and gives recovery
+  # to any second in the last 35 days.
+  point_in_time_recovery {
+    enabled = true
+  }
+
   tags = {
     Name = var.hot-storage-name
   }
@@ -42,6 +49,13 @@ resource "aws_dynamodb_table" "cold_storage" {
   attribute {
     name = "timestamp"
     type = "N"
+  }
+
+  # Continuous backup, 35-day restore window. On-demand backup storage is
+  # billed per GB, so this is near-free at this table size and gives recovery
+  # to any second in the last 35 days.
+  point_in_time_recovery {
+    enabled = true
   }
 
   tags = {
@@ -66,6 +80,13 @@ resource "aws_dynamodb_table" "execution_registry" {
     enabled        = true
   }
 
+  # Continuous backup, 35-day restore window. On-demand backup storage is
+  # billed per GB, so this is near-free at this table size and gives recovery
+  # to any second in the last 35 days.
+  point_in_time_recovery {
+    enabled = true
+  }
+
   tags = {
     Name = var.execution-registry-name
   }
@@ -86,6 +107,13 @@ resource "aws_dynamodb_table" "device_status" {
   ttl {
     attribute_name = "TimeToExist"
     enabled        = true
+  }
+
+  # Continuous backup, 35-day restore window. On-demand backup storage is
+  # billed per GB, so this is near-free at this table size and gives recovery
+  # to any second in the last 35 days.
+  point_in_time_recovery {
+    enabled = true
   }
 
   tags = {
