@@ -570,9 +570,9 @@ dedicated recovery logic are design intent.
 
 > **Implementation status:** 🔴 Design only.
 
-Crash/Control/LWT events accumulate in their SQS queues (14-day retention) during an
+Crash/Control/LWT events accumulate in their SQS queues (four-day retention) during an
 outage and are drained on recovery by the plain poll loop. The documented queue-drain order
-(Control → LWT → Crash), the 24h/14d branch logic, and DLQ behaviour are design reasoning,
+(Control → LWT → Crash), the 24h/four-day branch logic, and DLQ behaviour are design reasoning,
 not separate recovery code. The implemented recovery is simply *SQS retention +
 reprocessing*.
 
@@ -583,7 +583,7 @@ reprocessing*.
 The principle that **Step Functions continues running independently of alert-handler** is
 correct and implemented — the countdown timer, IoT publishes, and audit writes live in the
 ASL, so an alert-handler outage does not stop active countdowns. New alert events queue in
-SQS (14-day retention) until recovery. Prometheus health checks, infra/status notifications,
+SQS (four-day retention) until recovery. Prometheus health checks, infra/status notifications,
 and DLQ monitoring-alarm wiring are design intent (the DLQ alarm itself is implemented).
 
 ### Flow 9I — Database Failure
@@ -657,12 +657,12 @@ It is orthogonal to the alert platform.
 
 | Component | Scaling | Min | Max |
 |---|---|---|---|
-| telemetry-processor | target-tracking on Telemetry Queue depth | 1 | 3 |
-| processing-engine | target-tracking on Crash / LWT / Control queue depth | 1 | 3 |
-| alert-handler | target-tracking on Alert / Override queue depth | 1 | 3 |
+| telemetry-processor | target-tracking on Telemetry Queue depth | 2 | 6 |
+| processing-engine | target-tracking on Crash / LWT / Control queue depth | 2 | 4 |
+| alert-handler | target-tracking on Alert / Override queue depth | 2 | 4 |
 
 - Auto-scaling is **reactive target-tracking only** (queue depth), driven by CloudWatch; there
-  is **no scheduled scaling, no ALB**, and min/max are 1/3, not 2/5.
+  is **no scheduled scaling, no ALB**, and min/max are 2/6 (telemetry), 2/4 (processing and alerts).
 - Hot/Cold Storage are **provisioned-capacity** DynamoDB tables (5/5 RCU/WCU,
   device-status 3/3); **no DynamoDB auto-scaling** is configured.
 - ECS services use **rolling deployments** with health-check readiness; queue consumers use
@@ -670,12 +670,11 @@ It is orthogonal to the alert platform.
   finish in-flight messages (graceful shutdown) — all implemented.
 
 **Design intent (not implemented):** scheduled scaling, ALB in front of a telemetry HTTP
-ingest, min 2 / max 5, cooldown periods, CPU-based scaling, ALB connection draining,
+ingest, cooldown periods, CPU-based scaling, ALB connection draining,
 DynamoDB auto-scaling. See Future Enhancements.
 
-**Recommended production posture:** for a portfolio/demo project the reactive 1–3 model is
-fine. If you later want to demonstrate richer scaling, add scheduled actions and increase min
-capacity to 2.
+**Recommended production posture:** for a portfolio/demo project the reactive 2–6 model is
+fine. If you later want to demonstrate richer scaling, add scheduled scaling actions.
 
 ---
 
@@ -705,7 +704,7 @@ Enhancements):
     design intended it to also carry low-battery warnings.
 11. **Device-layer buffering/catch-up, Bluetooth, battery thresholds** are not simulated or
     implemented; they are design intent for a future device SDK.
-12. **Scaling is reactive only (1–3)**, so a true mass event could saturate the consumers
+12. **Scaling is reactive only (2–6)**, so a true mass event could saturate the consumers
     before target-tracking reacts.
 
 ---
