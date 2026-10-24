@@ -46,7 +46,8 @@ The twelve queues are:
 
 All twelve are **standard**, not FIFO. Ordering is not taken from arrival order;
 it is taken from the incident timestamp, and duplicates are absorbed by the
-lease and deterministic identifiers described in ADR-0005.
+lease and deterministic identifiers described in ADR-0005. All twelve also carry
+an explicit **four-day message retention**.
 
 Each source queue is also the autoscaling input for the service that consumes
 it: `telemetry-processor` target-tracks the telemetry queue, `processing-engine`
@@ -84,7 +85,7 @@ oldest-message-age alarm.
 - **No ordering guarantee.** Out-of-order crashes are resolved by comparing timestamps, not by the queue.
 - **`maxReceiveCount` counts receives, not time.** A fast-failing message can dead-letter quickly; the default 30-second visibility timeout is what spaces the retries.
 - **Malformed messages are deleted, not dead-lettered.** `telemetry-processor` deletes a payload without `helmet_id`, `processing-engine` deletes an invalid crash, and `alert-handler` deletes a malformed alert or override. The DLQ therefore records *processing* failures, not *validation* failures — a known limitation.
-- **Retention is left at the SQS default (four days).** It is not configured explicitly.
+- **Retention is four days**, set explicitly on all twelve queues rather than left to the provider default.
 - **No customer-managed key.** The queues use the default SSE-SQS encryption; a CMK is deferred with the rest of §5.4b.
 - **Redrive is a permission, not an automation.** Moving messages back from a DLQ is an operator action.
 
@@ -100,7 +101,7 @@ oldest-message-age alarm.
 - Strict ordering becomes a hard requirement, which would justify FIFO with a per-helmet message group.
 - A signal acquires a second consumer, which would justify SNS fan-out or a separate queue per consumer instead of one queue per signal.
 - Throughput approaches standard-queue limits — unlikely at per-helmet volume.
-- Retention longer than four days is required, at which point `message_retention_seconds` must be set explicitly.
+- Retention longer than four days is required, which would change the single `message_retention_seconds` local.
 - CMK encryption is required, which also adds `kms:Decrypt` / `kms:GenerateDataKey` to every producer and consumer.
 - A shared triage process or automated redrive is introduced, which would change the DLQ ownership model.
 
