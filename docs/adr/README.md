@@ -23,7 +23,7 @@ Statuses: `Proposed` · `Accepted` · `Superseded by ADR-NNNN` · `Deprecated`
 | [0001](0001-public-subnets-and-gateway-endpoints.md) | Public subnets + ingress-free SG + free gateway endpoints only | Accepted |
 | 0002 | Terraform split into platform / shared-data / messaging / monitoring + per-service stacks | *to write* |
 | [0003](0003-ssm-as-the-cross-stack-coupling-layer.md) | SSM Parameter Store as the cross-stack coupling layer | Accepted |
-| 0004 | One SQS queue per signal type, each with a DLQ | *to write* |
+| [0004](0004-one-queue-per-signal-with-dlq.md) | One SQS queue per signal type, each with a DLQ | Accepted |
 | [0005](0005-hot-cold-split-and-late-cancel-reconciliation.md) | Hot/cold DynamoDB split + reconciliation workflow for late cancels | Accepted |
 | 0006 | CloudWatch for observability (no Prometheus/Grafana) | *to write* |
 | 0007 | Single-environment deployment | *to write* |
