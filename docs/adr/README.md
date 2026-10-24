@@ -24,7 +24,7 @@ Statuses: `Proposed` · `Accepted` · `Superseded by ADR-NNNN` · `Deprecated`
 | 0002 | Terraform split into platform / shared-data / messaging / monitoring + per-service stacks | *to write* |
 | 0003 | SSM Parameter Store as the cross-stack coupling layer | *to write* |
 | 0004 | One SQS queue per signal type, each with a DLQ | *to write* |
-| 0005 | Hot/cold DynamoDB split + reconciliation workflow for late cancels | *to write* |
+| [0005](0005-hot-cold-split-and-late-cancel-reconciliation.md) | Hot/cold DynamoDB split + reconciliation workflow for late cancels | Accepted |
 | 0006 | CloudWatch for observability (no Prometheus/Grafana) | *to write* |
 | 0007 | Single-environment deployment | *to write* |
 | 0008 | Manual approval vs automatic confirmation on the alert countdown | *to write* |
